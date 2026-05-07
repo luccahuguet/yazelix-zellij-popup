@@ -4,7 +4,8 @@ use std::path::PathBuf;
 use yazelix_zellij_popup::popup_contract::{
     resolve_transient_toggle_plan_by_identity, select_transient_pane_by_identity,
     ConfiguredPopupSpecs, PopupMessageRequestError, TransientPaneGeometry, TransientPaneSnapshot,
-    TransientPopupAction, TransientPopupPipeRequest, TransientTogglePlan,
+    TransientPopupAction, TransientPopupCommandHook, TransientPopupPipeRequest,
+    TransientTogglePlan,
 };
 use zellij_tile::prelude::*;
 
@@ -134,9 +135,12 @@ impl State {
                         self.open_popup(pipe_message, &request, &fallback_cwd)
                     }
                     TransientTogglePlan::Focus(pane_id) => self.focus_popup(pipe_message, pane_id),
-                    TransientTogglePlan::CloseAndHideFloatingLayer(pane_id) => {
-                        self.close_popup(pipe_message, pane_id)
-                    }
+                    TransientTogglePlan::CloseAndHideFloatingLayer(pane_id) => self.close_popup(
+                        pipe_message,
+                        pane_id,
+                        request.spec.on_close.as_ref(),
+                        &fallback_cwd,
+                    ),
                 }
             }
             TransientPopupAction::Open => self.open_popup(pipe_message, &request, &fallback_cwd),
@@ -148,7 +152,12 @@ impl State {
             }
             TransientPopupAction::Close => {
                 match select_transient_pane_by_identity(&snapshots, request.spec.identity()) {
-                    Some(pane) => self.close_popup(pipe_message, pane.pane_id),
+                    Some(pane) => self.close_popup(
+                        pipe_message,
+                        pane.pane_id,
+                        request.spec.on_close.as_ref(),
+                        &fallback_cwd,
+                    ),
                     None => self.respond(pipe_message, RESULT_MISSING),
                 }
             }
@@ -213,8 +222,15 @@ impl State {
         self.respond(pipe_message, RESULT_FOCUSED);
     }
 
-    fn close_popup(&self, pipe_message: &PipeMessage, pane_id: PaneId) {
+    fn close_popup(
+        &self,
+        pipe_message: &PipeMessage,
+        pane_id: PaneId,
+        on_close: Option<&TransientPopupCommandHook>,
+        fallback_cwd: &str,
+    ) {
         close_pane_with_id(pane_id);
+        run_on_close_hook(on_close, fallback_cwd);
         match hide_floating_panes(None) {
             Ok(_) => self.respond(pipe_message, RESULT_CLOSED),
             Err(_) => self.respond(pipe_message, RESULT_CLOSED_FLOATING_CLEANUP_FAILED),
@@ -277,4 +293,22 @@ fn floating_coordinates(geometry: TransientPaneGeometry) -> Option<FloatingPaneC
         None,
         None,
     )
+}
+
+fn run_on_close_hook(on_close: Option<&TransientPopupCommandHook>, fallback_cwd: &str) {
+    let Some(hook_plan) = on_close.and_then(|hook| hook.launch_plan(fallback_cwd)) else {
+        return;
+    };
+
+    let argv = hook_plan
+        .command
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>();
+    run_command_with_env_variables_and_cwd(
+        &argv,
+        BTreeMap::new(),
+        PathBuf::from(hook_plan.cwd),
+        BTreeMap::new(),
+    );
 }

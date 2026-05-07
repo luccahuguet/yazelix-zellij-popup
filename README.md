@@ -81,10 +81,27 @@ Optional:
 - `pane_title`, defaulting to `default_popup`
 - `command_marker`, defaulting to the command path
 - `cwd`, defaulting to the focused terminal pane cwd; relative values resolve against that focused cwd
+- `on_close`, an optional command hook run when `yzpp` closes the popup through `toggle` or `close`
 - `width_percent`, defaulting to `90`
 - `height_percent`, defaulting to `85`
 
 Width and height must be integers from `1` through `100`. Commands are argv, not shell strings.
+
+Hooks are also argv, not shell strings:
+
+```kdl
+popup {
+    command "lazygit"
+    pane_title "lazygit_popup"
+    on_close {
+        command "yzx"
+        arg_1 "sidebar"
+        arg_2 "refresh"
+    }
+}
+```
+
+`on_close` runs only when `yzpp` closes the pane in response to `toggle` or `close`. It does not run when the child process exits on its own.
 
 For multiple popups in the same plugin config, use a nested `popups` block and send the popup id as the payload:
 

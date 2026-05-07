@@ -30,8 +30,18 @@ pub struct TransientPopupSpec {
     pub command: Vec<String>,
     #[serde(default)]
     pub cwd: Option<String>,
+    #[serde(default)]
+    pub on_close: Option<TransientPopupCommandHook>,
     pub width_percent: usize,
     pub height_percent: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransientPopupCommandHook {
+    pub command: Vec<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -112,6 +122,12 @@ pub struct TransientPaneLaunchPlan {
     pub geometry: TransientPaneGeometry,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TransientPopupCommandHookPlan {
+    pub command: Vec<String>,
+    pub cwd: String,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct PopupSpecDraft {
     command: Option<String>,
@@ -119,8 +135,17 @@ struct PopupSpecDraft {
     pane_title: Option<String>,
     command_marker: Option<String>,
     cwd: Option<String>,
+    on_close: Option<PopupCommandHookDraft>,
     width_percent: Option<String>,
     height_percent: Option<String>,
+    invalid: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct PopupCommandHookDraft {
+    command: Option<String>,
+    args: BTreeMap<usize, String>,
+    cwd: Option<String>,
     invalid: bool,
 }
 
@@ -271,6 +296,41 @@ impl TransientPopupSpec {
                 .as_deref()
                 .map(str::trim)
                 .is_none_or(|cwd| !cwd.is_empty())
+            && self
+                .on_close
+                .as_ref()
+                .is_none_or(TransientPopupCommandHook::is_launchable)
+    }
+}
+
+impl TransientPopupCommandHook {
+    pub fn launch_plan(&self, fallback_cwd: &str) -> Option<TransientPopupCommandHookPlan> {
+        if !self.is_launchable() {
+            return None;
+        }
+
+        Some(TransientPopupCommandHookPlan {
+            command: self.command.clone(),
+            cwd: resolve_launch_cwd(
+                self.cwd
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|cwd| !cwd.is_empty()),
+                fallback_cwd.trim(),
+            )?,
+        })
+    }
+
+    fn is_launchable(&self) -> bool {
+        self.command
+            .first()
+            .is_some_and(|command_path| !command_path.trim().is_empty())
+            && self.command.iter().all(|arg| !arg.trim().is_empty())
+            && self
+                .cwd
+                .as_deref()
+                .map(str::trim)
+                .is_none_or(|cwd| !cwd.is_empty())
     }
 }
 
@@ -409,8 +469,29 @@ fn build_configured_spec(id: &str, draft: PopupSpecDraft) -> Option<TransientPop
         command_marker: trim_optional(draft.command_marker).or(Some(command_path)),
         command,
         cwd: trim_optional(draft.cwd),
+        on_close: match draft.on_close {
+            Some(hook) => Some(build_configured_hook(hook)?),
+            None => None,
+        },
         width_percent: parse_percent(draft.width_percent, DEFAULT_WIDTH_PERCENT)?,
         height_percent: parse_percent(draft.height_percent, DEFAULT_HEIGHT_PERCENT)?,
+    })
+}
+
+fn build_configured_hook(draft: PopupCommandHookDraft) -> Option<TransientPopupCommandHook> {
+    if draft.invalid {
+        return None;
+    }
+
+    let command_path = trim_required(draft.command)?;
+    let mut command = vec![command_path];
+    for arg in draft.args.into_values() {
+        command.push(trim_required(Some(arg))?);
+    }
+
+    Some(TransientPopupCommandHook {
+        command,
+        cwd: trim_optional(draft.cwd),
     })
 }
 
@@ -457,6 +538,14 @@ fn parse_popup_fields_into(id: &str, raw: &str, draft: &mut PopupSpecDraft) {
 fn parse_popup_fields_document_into(document: &KdlDocument, draft: &mut PopupSpecDraft) {
     for field_node in document.nodes() {
         let field_name = field_node.name().value();
+        if field_name == "on_close" {
+            parse_hook_node_into(
+                field_node,
+                draft.on_close.get_or_insert_with(Default::default),
+            );
+            continue;
+        }
+
         let Some(field) = popup_config_field(field_name) else {
             draft.invalid = true;
             continue;
@@ -467,6 +556,27 @@ fn parse_popup_fields_document_into(document: &KdlDocument, draft: &mut PopupSpe
         };
 
         apply_config_field(draft, field, value);
+    }
+}
+
+fn parse_hook_node_into(field_node: &KdlNode, draft: &mut PopupCommandHookDraft) {
+    let Some(children) = field_node.children() else {
+        draft.invalid = true;
+        return;
+    };
+
+    for hook_node in children.nodes() {
+        let field_name = hook_node.name().value();
+        let Some(field) = hook_config_field(field_name) else {
+            draft.invalid = true;
+            continue;
+        };
+        let Some(value) = popup_field_value(hook_node) else {
+            draft.invalid = true;
+            continue;
+        };
+
+        apply_hook_config_field(draft, field, value);
     }
 }
 
@@ -495,6 +605,24 @@ fn apply_config_field(draft: &mut PopupSpecDraft, field: PopupConfigField, value
         PopupConfigField::WidthPercent => draft.width_percent = Some(value),
         PopupConfigField::HeightPercent => draft.height_percent = Some(value),
         PopupConfigField::Arg(index) => {
+            if index == 0 {
+                draft.invalid = true;
+            } else {
+                draft.args.insert(index, value);
+            }
+        }
+    }
+}
+
+fn apply_hook_config_field(
+    draft: &mut PopupCommandHookDraft,
+    field: PopupCommandHookField,
+    value: String,
+) {
+    match field {
+        PopupCommandHookField::Command => draft.command = Some(value),
+        PopupCommandHookField::Cwd => draft.cwd = Some(value),
+        PopupCommandHookField::Arg(index) => {
             if index == 0 {
                 draft.invalid = true;
             } else {
@@ -541,6 +669,13 @@ enum PopupConfigField {
     Arg(usize),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PopupCommandHookField {
+    Command,
+    Cwd,
+    Arg(usize),
+}
+
 fn popup_config_field(key: &str) -> Option<PopupConfigField> {
     if let Some(index) = key.strip_prefix("arg_") {
         index.parse::<usize>().ok().map(PopupConfigField::Arg)
@@ -556,6 +691,18 @@ fn popup_config_field(key: &str) -> Option<PopupConfigField> {
         Some(PopupConfigField::WidthPercent)
     } else if key == "height_percent" {
         Some(PopupConfigField::HeightPercent)
+    } else {
+        None
+    }
+}
+
+fn hook_config_field(key: &str) -> Option<PopupCommandHookField> {
+    if let Some(index) = key.strip_prefix("arg_") {
+        index.parse::<usize>().ok().map(PopupCommandHookField::Arg)
+    } else if key == "command" {
+        Some(PopupCommandHookField::Command)
+    } else if key == "cwd" {
+        Some(PopupCommandHookField::Cwd)
     } else {
         None
     }
@@ -703,6 +850,59 @@ mod tests {
         assert_eq!(request.spec.id, "lazygit");
         assert_eq!(request.spec.command, vec!["lazygit"]);
         assert_eq!(request.spec.pane_title, "lazygit_popup");
+    }
+
+    #[test]
+    fn configured_spec_parses_on_close_hook() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                lazygit {
+                    command "lazygit"
+                    on_close {
+                        command "yzx"
+                        arg_1 "sidebar"
+                        arg_2 "refresh"
+                        cwd "."
+                    }
+                }
+            "#,
+        )]));
+
+        let request = specs
+            .request_from_message("toggle", Some("lazygit"))
+            .expect("named configured request");
+        let hook_plan = request
+            .spec
+            .on_close
+            .as_ref()
+            .and_then(|hook| hook.launch_plan("/repo"))
+            .expect("hook plan");
+
+        assert_eq!(hook_plan.command, vec!["yzx", "sidebar", "refresh"]);
+        assert_eq!(hook_plan.cwd, "/repo/.");
+    }
+
+    #[test]
+    fn configured_spec_rejects_invalid_on_close_hook() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                lazygit {
+                    command "lazygit"
+                    on_close {
+                        arg_1 "sidebar"
+                    }
+                }
+            "#,
+        )]));
+
+        assert_eq!(
+            specs.request_from_message("toggle", Some("lazygit")),
+            Err(PopupMessageRequestError::InvalidConfiguredSpec(
+                "lazygit".into()
+            ))
+        );
     }
 
     #[test]
