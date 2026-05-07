@@ -1,0 +1,29 @@
+// Plain-Zellij example for Yazelix Zellij Popup.
+// Replace the plugin location with the path to yzpp.wasm.
+
+plugins {
+    yzpp location="__YZPP_WASM__" {
+        popup {
+            command "gitui"
+            pane_title "gitui_popup"
+            command_marker "gitui"
+            cwd "."
+            width_percent 90
+            height_percent 85
+        }
+    }
+}
+
+load_plugins {
+    yzpp
+}
+
+keybinds {
+    normal {
+        bind "Alt g" {
+            MessagePlugin "yzpp" {
+                name "toggle"
+            }
+        }
+    }
+}
