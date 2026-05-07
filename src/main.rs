@@ -124,18 +124,22 @@ impl State {
             .map(|pane| pane.transient_snapshot())
             .collect();
 
+        let fallback_cwd = self.launch_fallback_cwd(active_tab_position);
+
         match request.action {
             TransientPopupAction::Toggle => {
                 match resolve_transient_toggle_plan_by_identity(&snapshots, request.spec.identity())
                 {
-                    TransientTogglePlan::Open => self.open_popup(pipe_message, &request),
+                    TransientTogglePlan::Open => {
+                        self.open_popup(pipe_message, &request, &fallback_cwd)
+                    }
                     TransientTogglePlan::Focus(pane_id) => self.focus_popup(pipe_message, pane_id),
                     TransientTogglePlan::CloseAndHideFloatingLayer(pane_id) => {
                         self.close_popup(pipe_message, pane_id)
                     }
                 }
             }
-            TransientPopupAction::Open => self.open_popup(pipe_message, &request),
+            TransientPopupAction::Open => self.open_popup(pipe_message, &request, &fallback_cwd),
             TransientPopupAction::Focus => {
                 match select_transient_pane_by_identity(&snapshots, request.spec.identity()) {
                     Some(pane) => self.focus_popup(pipe_message, pane.pane_id),
@@ -165,9 +169,23 @@ impl State {
         Some(active_tab_position)
     }
 
-    fn open_popup(&self, pipe_message: &PipeMessage, request: &TransientPopupPipeRequest) {
-        let fallback_cwd = self.initial_cwd.to_string_lossy();
-        let Some(launch_plan) = request.launch_plan(&fallback_cwd) else {
+    fn launch_fallback_cwd(&self, active_tab_position: usize) -> String {
+        self.terminal_panes_by_tab
+            .get(&active_tab_position)
+            .and_then(|panes| panes.iter().find(|pane| pane.is_focused))
+            .and_then(|pane| get_pane_cwd(pane.pane_id).ok())
+            .unwrap_or_else(|| self.initial_cwd.clone())
+            .display()
+            .to_string()
+    }
+
+    fn open_popup(
+        &self,
+        pipe_message: &PipeMessage,
+        request: &TransientPopupPipeRequest,
+        fallback_cwd: &str,
+    ) {
+        let Some(launch_plan) = request.launch_plan(fallback_cwd) else {
             self.respond(pipe_message, RESULT_INVALID_PAYLOAD);
             return;
         };

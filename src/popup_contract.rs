@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
 
 use kdl::{KdlDocument, KdlNode, KdlValue};
 use serde::{Deserialize, Serialize};
@@ -310,12 +311,12 @@ pub fn resolve_transient_launch_plan(
     if command_path.is_empty() {
         return None;
     }
-    let cwd = request
+    let requested_cwd = request
         .requested_cwd
         .as_deref()
         .map(str::trim)
-        .filter(|cwd| !cwd.is_empty())
-        .unwrap_or_else(|| request.fallback_cwd.trim());
+        .filter(|cwd| !cwd.is_empty());
+    let cwd = resolve_launch_cwd(requested_cwd, request.fallback_cwd.trim())?;
     if cwd.is_empty() {
         return None;
     }
@@ -323,9 +324,23 @@ pub fn resolve_transient_launch_plan(
     Some(TransientPaneLaunchPlan {
         command_path: command_path.to_string(),
         args: request.args,
-        cwd: cwd.to_string(),
+        cwd,
         geometry: request.geometry,
     })
+}
+
+fn resolve_launch_cwd(requested_cwd: Option<&str>, fallback_cwd: &str) -> Option<String> {
+    match requested_cwd {
+        Some(cwd) if Path::new(cwd).is_absolute() => Some(cwd.to_string()),
+        Some(cwd) => {
+            if fallback_cwd.is_empty() {
+                return None;
+            }
+
+            Some(Path::new(fallback_cwd).join(cwd).display().to_string())
+        }
+        None => (!fallback_cwd.is_empty()).then(|| fallback_cwd.to_string()),
+    }
 }
 
 pub fn select_transient_pane_by_identity<Id: Copy>(
@@ -602,7 +617,66 @@ mod tests {
         assert_eq!(request.spec.command_marker.as_deref(), Some("gitui"));
         assert_eq!(
             request.launch_plan("/fallback").expect("launch plan").cwd,
-            "."
+            "/fallback/."
+        );
+    }
+
+    #[test]
+    fn relative_configured_cwd_resolves_against_focused_fallback() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popup",
+            r#"
+                    command "gitui"
+                    cwd "tools"
+                "#,
+        )]));
+
+        let request = specs
+            .request_from_message("toggle", None)
+            .expect("configured request");
+
+        assert_eq!(
+            request.launch_plan("/repo").expect("launch plan").cwd,
+            "/repo/tools"
+        );
+    }
+
+    #[test]
+    fn configured_spec_without_cwd_uses_focused_fallback() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popup",
+            r#"
+                    command "gitui"
+                "#,
+        )]));
+
+        let request = specs
+            .request_from_message("toggle", None)
+            .expect("configured request");
+
+        assert_eq!(
+            request.launch_plan("/repo").expect("launch plan").cwd,
+            "/repo"
+        );
+    }
+
+    #[test]
+    fn absolute_configured_cwd_is_preserved() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popup",
+            r#"
+                    command "gitui"
+                    cwd "/tmp/repo"
+                "#,
+        )]));
+
+        let request = specs
+            .request_from_message("toggle", None)
+            .expect("configured request");
+
+        assert_eq!(
+            request.launch_plan("/repo").expect("launch plan").cwd,
+            "/tmp/repo"
         );
     }
 

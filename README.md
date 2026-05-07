@@ -80,7 +80,7 @@ Optional:
 - `arg_1`, `arg_2`, and so on for argv arguments
 - `pane_title`, defaulting to `default_popup`
 - `command_marker`, defaulting to the command path
-- `cwd`, defaulting to the Zellij plugin initial cwd
+- `cwd`, defaulting to the focused terminal pane cwd; relative values resolve against that focused cwd
 - `width_percent`, defaulting to `90`
 - `height_percent`, defaulting to `85`
 
