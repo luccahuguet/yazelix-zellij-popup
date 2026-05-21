@@ -132,32 +132,73 @@ impl State {
                 match resolve_transient_toggle_plan_by_identity(&snapshots, request.spec.identity())
                 {
                     TransientTogglePlan::Open => {
+                        self.close_displaced_configured_popups(
+                            &request,
+                            &snapshots,
+                            None,
+                            &fallback_cwd,
+                        );
                         self.open_popup(pipe_message, &request, &fallback_cwd)
                     }
-                    TransientTogglePlan::Focus(pane_id) => self.focus_popup(pipe_message, pane_id),
-                    TransientTogglePlan::CloseAndHideFloatingLayer(pane_id) => self.close_popup(
-                        pipe_message,
-                        pane_id,
-                        request.spec.on_close.as_ref(),
-                        &fallback_cwd,
-                    ),
+                    TransientTogglePlan::Focus(pane_id) => {
+                        self.close_displaced_configured_popups(
+                            &request,
+                            &snapshots,
+                            Some(pane_id),
+                            &fallback_cwd,
+                        );
+                        self.focus_popup(pipe_message, pane_id);
+                    }
+                    TransientTogglePlan::CloseAndHideFloatingLayer(pane_id) => {
+                        self.close_displaced_configured_popups(
+                            &request,
+                            &snapshots,
+                            Some(pane_id),
+                            &fallback_cwd,
+                        );
+                        self.close_popup(
+                            pipe_message,
+                            pane_id,
+                            request.spec.on_close.as_ref(),
+                            &fallback_cwd,
+                        );
+                    }
                 }
             }
-            TransientPopupAction::Open => self.open_popup(pipe_message, &request, &fallback_cwd),
+            TransientPopupAction::Open => {
+                self.close_displaced_configured_popups(&request, &snapshots, None, &fallback_cwd);
+                self.open_popup(pipe_message, &request, &fallback_cwd);
+            }
             TransientPopupAction::Focus => {
                 match select_transient_pane_by_identity(&snapshots, request.spec.identity()) {
-                    Some(pane) => self.focus_popup(pipe_message, pane.pane_id),
+                    Some(pane) => {
+                        self.close_displaced_configured_popups(
+                            &request,
+                            &snapshots,
+                            Some(pane.pane_id),
+                            &fallback_cwd,
+                        );
+                        self.focus_popup(pipe_message, pane.pane_id);
+                    }
                     None => self.respond(pipe_message, RESULT_MISSING),
                 }
             }
             TransientPopupAction::Close => {
                 match select_transient_pane_by_identity(&snapshots, request.spec.identity()) {
-                    Some(pane) => self.close_popup(
-                        pipe_message,
-                        pane.pane_id,
-                        request.spec.on_close.as_ref(),
-                        &fallback_cwd,
-                    ),
+                    Some(pane) => {
+                        self.close_displaced_configured_popups(
+                            &request,
+                            &snapshots,
+                            Some(pane.pane_id),
+                            &fallback_cwd,
+                        );
+                        self.close_popup(
+                            pipe_message,
+                            pane.pane_id,
+                            request.spec.on_close.as_ref(),
+                            &fallback_cwd,
+                        );
+                    }
                     None => self.respond(pipe_message, RESULT_MISSING),
                 }
             }
@@ -220,6 +261,23 @@ impl State {
     fn focus_popup(&self, pipe_message: &PipeMessage, pane_id: PaneId) {
         focus_pane_with_id(pane_id, true, false);
         self.respond(pipe_message, RESULT_FOCUSED);
+    }
+
+    fn close_displaced_configured_popups(
+        &self,
+        request: &TransientPopupPipeRequest,
+        snapshots: &[TransientPaneSnapshot<'_, PaneId>],
+        current_pane_id: Option<PaneId>,
+        fallback_cwd: &str,
+    ) {
+        for candidate in self.popup_specs.select_other_configured_panes(
+            snapshots,
+            request.spec.id.as_str(),
+            current_pane_id,
+        ) {
+            close_pane_with_id(candidate.pane_id);
+            run_on_close_hook(candidate.on_close, fallback_cwd);
+        }
     }
 
     fn close_popup(

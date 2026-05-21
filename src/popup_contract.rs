@@ -93,6 +93,12 @@ pub struct TransientPaneState<Id> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TransientPaneCloseCandidate<'a, Id> {
+    pub pane_id: Id,
+    pub on_close: Option<&'a TransientPopupCommandHook>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TransientTogglePlan<Id> {
     Open,
     Focus(Id),
@@ -245,6 +251,41 @@ impl ConfiguredPopupSpecs {
         }
 
         Err(PopupMessageRequestError::InvalidPayload)
+    }
+
+    pub fn select_other_configured_panes<'a, Id: Copy + PartialEq>(
+        &'a self,
+        panes: &[TransientPaneSnapshot<'_, Id>],
+        current_spec_id: &str,
+        current_pane_id: Option<Id>,
+    ) -> Vec<TransientPaneCloseCandidate<'a, Id>> {
+        let mut candidates = Vec::new();
+
+        for (spec_id, spec) in &self.specs {
+            if spec_id == current_spec_id {
+                continue;
+            }
+
+            let Some(pane) = select_transient_pane_by_identity(panes, spec.identity()) else {
+                continue;
+            };
+            if current_pane_id == Some(pane.pane_id)
+                || candidates
+                    .iter()
+                    .any(|candidate: &TransientPaneCloseCandidate<'_, Id>| {
+                        candidate.pane_id == pane.pane_id
+                    })
+            {
+                continue;
+            }
+
+            candidates.push(TransientPaneCloseCandidate {
+                pane_id: pane.pane_id,
+                on_close: spec.on_close.as_ref(),
+            });
+        }
+
+        candidates
     }
 }
 
@@ -712,7 +753,8 @@ fn hook_config_field(key: &str) -> Option<PopupCommandHookField> {
 mod tests {
     use super::{
         resolve_transient_toggle_plan_by_identity, ConfiguredPopupSpecs, PopupMessageRequestError,
-        TransientPaneSnapshot, TransientPaneState, TransientPopupAction, TransientTogglePlan,
+        TransientPaneCloseCandidate, TransientPaneSnapshot, TransientPaneState,
+        TransientPopupAction, TransientTogglePlan,
     };
     use std::collections::BTreeMap;
 
@@ -996,6 +1038,72 @@ mod tests {
                 pane_id: 11,
                 is_focused: true,
             })
+        );
+    }
+
+    #[test]
+    fn selects_displaced_configured_popup_panes_for_cleanup() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                top_popup {
+                    command "yzx"
+                    arg_1 "config"
+                    arg_2 "ui"
+                }
+                bottom_popup {
+                    command "lazygit"
+                }
+            "#,
+        )]));
+        let request = specs
+            .request_from_message("toggle", Some("bottom_popup"))
+            .expect("request");
+        let panes = [
+            transient_pane(11, "top_popup_popup", Some("yzx config ui"), false),
+            transient_pane(22, "bottom_popup_popup", Some("lazygit"), true),
+        ];
+
+        assert_eq!(
+            specs.select_other_configured_panes(&panes, request.spec.id.as_str(), Some(22)),
+            vec![TransientPaneCloseCandidate {
+                pane_id: 11,
+                on_close: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn displaced_popup_cleanup_deduplicates_overlapping_identity_matches() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                first {
+                    command "yzx"
+                    command_marker "shared"
+                    pane_title "shared_popup"
+                }
+                second {
+                    command "shared"
+                    command_marker "shared"
+                    pane_title "also_shared_popup"
+                }
+                active {
+                    command "lazygit"
+                }
+            "#,
+        )]));
+        let panes = [
+            transient_pane(11, "shared_popup", Some("shared command"), false),
+            transient_pane(22, "active_popup", Some("lazygit"), true),
+        ];
+
+        assert_eq!(
+            specs.select_other_configured_panes(&panes, "active", Some(22)),
+            vec![TransientPaneCloseCandidate {
+                pane_id: 11,
+                on_close: None,
+            }]
         );
     }
 }
