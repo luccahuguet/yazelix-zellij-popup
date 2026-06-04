@@ -20,6 +20,14 @@ pub enum TransientPopupAction {
     Close,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TransientPopupToggleCloseBehavior {
+    #[default]
+    Close,
+    Hide,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct TransientPopupSpec {
@@ -32,6 +40,8 @@ pub struct TransientPopupSpec {
     pub cwd: Option<String>,
     #[serde(default)]
     pub on_close: Option<TransientPopupCommandHook>,
+    #[serde(default)]
+    pub toggle_close_behavior: TransientPopupToggleCloseBehavior,
     pub width_percent: usize,
     pub height_percent: usize,
 }
@@ -142,6 +152,7 @@ struct PopupSpecDraft {
     command_marker: Option<String>,
     cwd: Option<String>,
     on_close: Option<PopupCommandHookDraft>,
+    toggle_close_behavior: Option<String>,
     width_percent: Option<String>,
     height_percent: Option<String>,
     invalid: bool,
@@ -514,6 +525,7 @@ fn build_configured_spec(id: &str, draft: PopupSpecDraft) -> Option<TransientPop
             Some(hook) => Some(build_configured_hook(hook)?),
             None => None,
         },
+        toggle_close_behavior: parse_toggle_close_behavior(draft.toggle_close_behavior)?,
         width_percent: parse_percent(draft.width_percent, DEFAULT_WIDTH_PERCENT)?,
         height_percent: parse_percent(draft.height_percent, DEFAULT_HEIGHT_PERCENT)?,
     })
@@ -643,6 +655,7 @@ fn apply_config_field(draft: &mut PopupSpecDraft, field: PopupConfigField, value
         PopupConfigField::PaneTitle => draft.pane_title = Some(value),
         PopupConfigField::CommandMarker => draft.command_marker = Some(value),
         PopupConfigField::Cwd => draft.cwd = Some(value),
+        PopupConfigField::ToggleCloseBehavior => draft.toggle_close_behavior = Some(value),
         PopupConfigField::WidthPercent => draft.width_percent = Some(value),
         PopupConfigField::HeightPercent => draft.height_percent = Some(value),
         PopupConfigField::Arg(index) => {
@@ -689,6 +702,14 @@ fn trim_optional(value: Option<String>) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+fn parse_toggle_close_behavior(value: Option<String>) -> Option<TransientPopupToggleCloseBehavior> {
+    match trim_optional(value).as_deref() {
+        None | Some("close") => Some(TransientPopupToggleCloseBehavior::Close),
+        Some("hide") => Some(TransientPopupToggleCloseBehavior::Hide),
+        Some(_) => None,
+    }
+}
+
 fn parse_percent(value: Option<String>, default: usize) -> Option<usize> {
     match value {
         Some(value) => {
@@ -705,6 +726,7 @@ enum PopupConfigField {
     PaneTitle,
     CommandMarker,
     Cwd,
+    ToggleCloseBehavior,
     WidthPercent,
     HeightPercent,
     Arg(usize),
@@ -728,6 +750,8 @@ fn popup_config_field(key: &str) -> Option<PopupConfigField> {
         Some(PopupConfigField::CommandMarker)
     } else if key == "cwd" {
         Some(PopupConfigField::Cwd)
+    } else if key == "toggle_close_behavior" {
+        Some(PopupConfigField::ToggleCloseBehavior)
     } else if key == "width_percent" {
         Some(PopupConfigField::WidthPercent)
     } else if key == "height_percent" {
@@ -754,7 +778,7 @@ mod tests {
     use super::{
         resolve_transient_toggle_plan_by_identity, ConfiguredPopupSpecs, PopupMessageRequestError,
         TransientPaneCloseCandidate, TransientPaneSnapshot, TransientPaneState,
-        TransientPopupAction, TransientTogglePlan,
+        TransientPopupAction, TransientPopupToggleCloseBehavior, TransientTogglePlan,
     };
     use std::collections::BTreeMap;
 
@@ -804,6 +828,10 @@ mod tests {
         assert_eq!(request.spec.id, "default");
         assert_eq!(request.spec.command, vec!["gitui", "--watch"]);
         assert_eq!(request.spec.command_marker.as_deref(), Some("gitui"));
+        assert_eq!(
+            request.spec.toggle_close_behavior,
+            TransientPopupToggleCloseBehavior::Close
+        );
         assert_eq!(
             request.launch_plan("/fallback").expect("launch plan").cwd,
             "/fallback/."
@@ -895,6 +923,28 @@ mod tests {
     }
 
     #[test]
+    fn configured_spec_parses_toggle_close_behavior() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                btm {
+                    command "btm"
+                    toggle_close_behavior "hide"
+                }
+            "#,
+        )]));
+
+        let request = specs
+            .request_from_message("toggle", Some("btm"))
+            .expect("named configured request");
+
+        assert_eq!(
+            request.spec.toggle_close_behavior,
+            TransientPopupToggleCloseBehavior::Hide
+        );
+    }
+
+    #[test]
     fn configured_spec_parses_on_close_hook() {
         let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
             "popups",
@@ -943,6 +993,26 @@ mod tests {
             specs.request_from_message("toggle", Some("lazygit")),
             Err(PopupMessageRequestError::InvalidConfiguredSpec(
                 "lazygit".into()
+            ))
+        );
+    }
+
+    #[test]
+    fn configured_spec_rejects_invalid_toggle_close_behavior() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                btm {
+                    command "btm"
+                    toggle_close_behavior "keep_alive"
+                }
+            "#,
+        )]));
+
+        assert_eq!(
+            specs.request_from_message("toggle", Some("btm")),
+            Err(PopupMessageRequestError::InvalidConfiguredSpec(
+                "btm".into()
             ))
         );
     }
@@ -1000,6 +1070,7 @@ mod tests {
                 "command_marker": "gitui",
                 "command": ["gitui"],
                 "cwd": ".",
+                "toggle_close_behavior": "hide",
                 "width_percent": 90,
                 "height_percent": 85
             }
@@ -1011,6 +1082,10 @@ mod tests {
 
         assert_eq!(request.action, TransientPopupAction::Close);
         assert_eq!(request.spec.id, "gitui");
+        assert_eq!(
+            request.spec.toggle_close_behavior,
+            TransientPopupToggleCloseBehavior::Hide
+        );
     }
 
     #[test]

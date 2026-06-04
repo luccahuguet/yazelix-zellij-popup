@@ -5,7 +5,7 @@ use yazelix_zellij_popup::popup_contract::{
     resolve_transient_toggle_plan_by_identity, select_transient_pane_by_identity,
     ConfiguredPopupSpecs, PopupMessageRequestError, TransientPaneGeometry, TransientPaneSnapshot,
     TransientPopupAction, TransientPopupCommandHook, TransientPopupPipeRequest,
-    TransientTogglePlan,
+    TransientPopupToggleCloseBehavior, TransientTogglePlan,
 };
 use zellij_tile::prelude::*;
 
@@ -13,6 +13,8 @@ const RESULT_CLOSED: &str = "closed";
 const RESULT_CLOSED_FLOATING_CLEANUP_FAILED: &str = "closed_floating_cleanup_failed";
 const RESULT_DENIED: &str = "permissions_denied";
 const RESULT_FOCUSED: &str = "focused";
+const RESULT_HIDDEN: &str = "hidden";
+const RESULT_HIDDEN_FLOATING_CLEANUP_FAILED: &str = "hidden_floating_cleanup_failed";
 const RESULT_INVALID_CONFIG: &str = "invalid_config";
 const RESULT_INVALID_PAYLOAD: &str = "invalid_payload";
 const RESULT_MISSING: &str = "missing";
@@ -156,12 +158,19 @@ impl State {
                             Some(pane_id),
                             &fallback_cwd,
                         );
-                        self.close_popup(
-                            pipe_message,
-                            pane_id,
-                            request.spec.on_close.as_ref(),
-                            &fallback_cwd,
-                        );
+                        match request.spec.toggle_close_behavior {
+                            TransientPopupToggleCloseBehavior::Close => {
+                                self.close_popup(
+                                    pipe_message,
+                                    pane_id,
+                                    request.spec.on_close.as_ref(),
+                                    &fallback_cwd,
+                                );
+                            }
+                            TransientPopupToggleCloseBehavior::Hide => {
+                                self.hide_popup(pipe_message);
+                            }
+                        }
                     }
                 }
             }
@@ -292,6 +301,13 @@ impl State {
         match hide_floating_panes(None) {
             Ok(_) => self.respond(pipe_message, RESULT_CLOSED),
             Err(_) => self.respond(pipe_message, RESULT_CLOSED_FLOATING_CLEANUP_FAILED),
+        }
+    }
+
+    fn hide_popup(&self, pipe_message: &PipeMessage) {
+        match hide_floating_panes(None) {
+            Ok(_) => self.respond(pipe_message, RESULT_HIDDEN),
+            Err(_) => self.respond(pipe_message, RESULT_HIDDEN_FLOATING_CLEANUP_FAILED),
         }
     }
 
