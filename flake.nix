@@ -29,6 +29,20 @@
           cargo = rustToolchain;
           rustc = rustToolchain;
         };
+        zellijPluginWasmPackageContract = {
+          schemaVersion = 1;
+          pluginName = "yazelix-zellij-popup";
+          packageAttr = "yazelix_zellij_popup";
+          wasmPath = "share/yazelix_zellij_popup/yzpp.wasm";
+          wasmTarget = "wasm32-wasip1";
+          cargoBuildHookDisabled = true;
+          explicitCargoFromWasmToolchain = true;
+          explicitRustcFromWasmToolchain = true;
+          toolchainPrependedToPath = true;
+          wasmTargetLibdirCheckedBeforePreBuild = true;
+          cargoBuildRunsAfterPreBuild = true;
+          installCheckVerifiesWasm = true;
+        };
         yazelixZellijPopup = rustPlatform.buildRustPackage {
           pname = "yazelix-zellij-popup";
           version = "0.1.0";
@@ -36,7 +50,7 @@
           cargoLock.lockFile = ./Cargo.lock;
           nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [ pkgs.openssl ];
-          dontCargoBuild = true;
+          dontCargoBuild = zellijPluginWasmPackageContract.cargoBuildHookDisabled;
           doCheck = false;
 
           buildPhase = ''
@@ -44,7 +58,7 @@
             export RUSTC="${rustToolchain}/bin/rustc"
             export PATH="${rustToolchain}/bin:$PATH"
 
-            wasm_target_libdir="$("$RUSTC" --print target-libdir --target wasm32-wasip1)"
+            wasm_target_libdir="$("$RUSTC" --print target-libdir --target ${zellijPluginWasmPackageContract.wasmTarget})"
             if [ ! -d "$wasm_target_libdir" ]; then
               echo "Rust toolchain is missing wasm32-wasip1 std at $wasm_target_libdir" >&2
               exit 1
@@ -56,7 +70,7 @@
               --target-dir target \
               --offline \
               --profile release \
-              --target wasm32-wasip1
+              --target ${zellijPluginWasmPackageContract.wasmTarget}
 
             runHook postBuild
           '';
@@ -65,12 +79,12 @@
             runHook preInstall
 
             install -Dm644 target/wasm32-wasip1/release/yzpp.wasm \
-              "$out/share/yazelix_zellij_popup/yzpp.wasm"
+              "$out/${zellijPluginWasmPackageContract.wasmPath}"
             mkdir -p "$out/share/yazelix_zellij_popup/examples"
             substitute examples/gitui.kdl \
               "$out/share/yazelix_zellij_popup/examples/gitui.kdl" \
               --replace-fail "__YZPP_WASM__" \
-              "file:$out/share/yazelix_zellij_popup/yzpp.wasm"
+              "file:$out/${zellijPluginWasmPackageContract.wasmPath}"
             install -Dm644 examples/gitui.kdl \
               "$out/share/yazelix_zellij_popup/examples/gitui.template.kdl"
             install -Dm644 README.md "$out/share/doc/yazelix_zellij_popup/README.md"
@@ -86,7 +100,7 @@
           installCheckPhase = ''
             runHook preInstallCheck
 
-            test -s "$out/share/yazelix_zellij_popup/yzpp.wasm"
+            test -s "$out/${zellijPluginWasmPackageContract.wasmPath}"
             grep -q 'location="file:' "$out/share/yazelix_zellij_popup/examples/gitui.kdl"
             grep -q 'MessagePlugin "yzpp"' "$out/share/yazelix_zellij_popup/examples/gitui.kdl"
             grep -q 'command "gitui"' "$out/share/yazelix_zellij_popup/examples/gitui.kdl"
@@ -98,7 +112,8 @@
           '';
 
           passthru = {
-            wasmPath = "share/yazelix_zellij_popup/yzpp.wasm";
+            inherit zellijPluginWasmPackageContract;
+            wasmPath = zellijPluginWasmPackageContract.wasmPath;
             examplePath = "share/yazelix_zellij_popup/examples/gitui.kdl";
             templatePath = "share/yazelix_zellij_popup/examples/gitui.template.kdl";
           };
