@@ -93,6 +93,7 @@ pub struct TransientPaneSnapshot<'a, Id> {
     pub is_plugin: bool,
     pub exited: bool,
     pub is_floating: bool,
+    pub is_suppressed: bool,
     pub is_focused: bool,
 }
 
@@ -277,7 +278,8 @@ impl ConfiguredPopupSpecs {
                 continue;
             }
 
-            let Some(pane) = select_transient_pane_by_identity(panes, spec.identity()) else {
+            let Some(pane) = select_visible_transient_pane_by_identity(panes, spec.identity())
+            else {
                 continue;
             };
             if current_pane_id == Some(pane.pane_id)
@@ -462,21 +464,43 @@ pub fn select_transient_pane_by_identity<Id: Copy>(
     panes
         .iter()
         .filter(|pane| {
-            !pane.is_plugin
-                && !pane.exited
-                && pane.is_floating
-                && (pane.title.trim() == identity.pane_title
-                    || identity.command_marker.is_some_and(|command_marker| {
-                        pane.terminal_command
-                            .map(|command| command.contains(command_marker))
-                            .unwrap_or(false)
-                    }))
+            (pane.is_floating || pane.is_suppressed) && pane_matches_identity(pane, identity)
+        })
+        .max_by_key(|pane| (pane.is_focused, !pane.is_suppressed))
+        .map(|pane| TransientPaneState {
+            pane_id: pane.pane_id,
+            is_focused: pane.is_focused,
+        })
+}
+
+fn select_visible_transient_pane_by_identity<Id: Copy>(
+    panes: &[TransientPaneSnapshot<'_, Id>],
+    identity: TransientPaneIdentityView<'_>,
+) -> Option<TransientPaneState<Id>> {
+    panes
+        .iter()
+        .filter(|pane| {
+            pane.is_floating && !pane.is_suppressed && pane_matches_identity(pane, identity)
         })
         .max_by_key(|pane| pane.is_focused)
         .map(|pane| TransientPaneState {
             pane_id: pane.pane_id,
             is_focused: pane.is_focused,
         })
+}
+
+fn pane_matches_identity<Id>(
+    pane: &TransientPaneSnapshot<'_, Id>,
+    identity: TransientPaneIdentityView<'_>,
+) -> bool {
+    !pane.is_plugin
+        && !pane.exited
+        && (pane.title.trim() == identity.pane_title
+            || identity.command_marker.is_some_and(|command_marker| {
+                pane.terminal_command
+                    .map(|command| command.contains(command_marker))
+                    .unwrap_or(false)
+            }))
 }
 
 pub fn resolve_transient_toggle_plan_by_identity<Id: Copy>(
@@ -771,6 +795,7 @@ fn hook_config_field(key: &str) -> Option<PopupCommandHookField> {
     }
 }
 
+// Test lane: default
 #[cfg(test)]
 mod tests {
     use super::{
@@ -800,7 +825,25 @@ mod tests {
             is_plugin: false,
             exited: false,
             is_floating: true,
+            is_suppressed: false,
             is_focused,
+        }
+    }
+
+    fn suppressed_transient_pane<'a>(
+        pane_id: i32,
+        title: &'a str,
+        terminal_command: Option<&'a str>,
+    ) -> TransientPaneSnapshot<'a, i32> {
+        TransientPaneSnapshot {
+            pane_id,
+            title,
+            terminal_command,
+            is_plugin: false,
+            exited: false,
+            is_floating: false,
+            is_suppressed: true,
+            is_focused: false,
         }
     }
 
@@ -1115,6 +1158,58 @@ mod tests {
     }
 
     #[test]
+    // Regression: hidden keep-alive popups are suppressed, not floating, and must be reused.
+    fn toggle_plan_focuses_suppressed_popup_instead_of_opening() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                btm {
+                    command "yzx"
+                    arg_1 "popup_run"
+                    arg_2 "btm"
+                    toggle_close_behavior "hide"
+                }
+            "#,
+        )]));
+        let request = specs
+            .request_from_message("toggle", Some("btm"))
+            .expect("request");
+        let hidden = [suppressed_transient_pane(
+            10,
+            "yzx_btm",
+            Some("yzx popup_run btm"),
+        )];
+
+        assert_eq!(
+            resolve_transient_toggle_plan_by_identity(&hidden, request.spec.identity()),
+            TransientTogglePlan::Focus(10)
+        );
+    }
+
+    #[test]
+    // Defends: visible popup identity wins over a stale hidden candidate for the same spec.
+    fn transient_selection_prefers_visible_popup_over_suppressed_popup() {
+        let panes = [
+            suppressed_transient_pane(10, "yzx_btm", Some("yzx popup_run btm")),
+            transient_pane(11, "yzx_btm", Some("yzx popup_run btm"), false),
+        ];
+
+        assert_eq!(
+            super::select_transient_pane_by_identity(
+                &panes,
+                super::TransientPaneIdentityView {
+                    pane_title: "yzx_btm",
+                    command_marker: Some("popup_run btm"),
+                }
+            ),
+            Some(TransientPaneState {
+                pane_id: 11,
+                is_focused: false,
+            })
+        );
+    }
+
+    #[test]
     fn selects_displaced_configured_popup_panes_for_cleanup() {
         let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
             "popups",
@@ -1143,6 +1238,37 @@ mod tests {
                 pane_id: 11,
                 on_close: None,
             }]
+        );
+    }
+
+    #[test]
+    // Regression: hidden keep-alive panes are live state, not displaced visible popup clutter.
+    fn displaced_popup_cleanup_ignores_suppressed_popup_panes() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                process_monitor {
+                    command "yzx"
+                    arg_1 "popup_run"
+                    arg_2 "btm"
+                    toggle_close_behavior "hide"
+                }
+                gitui {
+                    command "gitui"
+                }
+            "#,
+        )]));
+        let request = specs
+            .request_from_message("toggle", Some("gitui"))
+            .expect("request");
+        let panes = [
+            suppressed_transient_pane(10, "process_monitor_popup", Some("yzx popup_run btm")),
+            transient_pane(11, "gitui_popup", Some("gitui"), true),
+        ];
+
+        assert_eq!(
+            specs.select_other_configured_panes(&panes, request.spec.id.as_str(), Some(11)),
+            Vec::<TransientPaneCloseCandidate<'_, i32>>::new()
         );
     }
 

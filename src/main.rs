@@ -37,6 +37,7 @@ struct TerminalPane {
     terminal_command: Option<String>,
     is_focused: bool,
     is_floating: bool,
+    is_suppressed: bool,
 }
 
 register_plugin!(State);
@@ -324,6 +325,7 @@ impl TerminalPane {
             is_plugin: false,
             exited: false,
             is_floating: self.is_floating,
+            is_suppressed: self.is_suppressed,
             is_focused: self.is_focused,
         }
     }
@@ -343,6 +345,7 @@ fn build_terminal_panes_by_tab(pane_manifest: &PaneManifest) -> HashMap<usize, V
                     terminal_command: pane.terminal_command.clone(),
                     is_focused: pane.is_focused,
                     is_floating: pane.is_floating,
+                    is_suppressed: pane.is_suppressed,
                 })
                 .collect();
             (*tab_position, terminal_panes)
