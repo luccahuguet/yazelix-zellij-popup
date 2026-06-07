@@ -149,7 +149,7 @@ impl State {
                             Some(pane_id),
                             &fallback_cwd,
                         );
-                        self.focus_popup(pipe_message, pane_id);
+                        self.focus_popup(pipe_message, pane_id, request.spec.geometry());
                     }
                     TransientTogglePlan::ToggleFocused(pane_id) => {
                         self.close_displaced_configured_popups(
@@ -187,7 +187,7 @@ impl State {
                             Some(pane.pane_id),
                             &fallback_cwd,
                         );
-                        self.focus_popup(pipe_message, pane.pane_id);
+                        self.focus_popup(pipe_message, pane.pane_id, request.spec.geometry());
                     }
                     None => self.respond(pipe_message, RESULT_MISSING),
                 }
@@ -267,8 +267,16 @@ impl State {
         }
     }
 
-    fn focus_popup(&self, pipe_message: &PipeMessage, pane_id: PaneId) {
+    fn focus_popup(
+        &self,
+        pipe_message: &PipeMessage,
+        pane_id: PaneId,
+        geometry: Option<TransientPaneGeometry>,
+    ) {
         show_pane_with_id(pane_id, true, true);
+        if let Some(coordinates) = geometry.and_then(floating_coordinates) {
+            change_floating_panes_coordinates(vec![(pane_id, coordinates)]);
+        }
         self.respond(pipe_message, RESULT_FOCUSED);
     }
 
