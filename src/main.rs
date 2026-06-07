@@ -14,7 +14,6 @@ const RESULT_CLOSED_FLOATING_CLEANUP_FAILED: &str = "closed_floating_cleanup_fai
 const RESULT_DENIED: &str = "permissions_denied";
 const RESULT_FOCUSED: &str = "focused";
 const RESULT_HIDDEN: &str = "hidden";
-const RESULT_HIDDEN_FLOATING_CLEANUP_FAILED: &str = "hidden_floating_cleanup_failed";
 const RESULT_INVALID_CONFIG: &str = "invalid_config";
 const RESULT_INVALID_PAYLOAD: &str = "invalid_payload";
 const RESULT_MISSING: &str = "missing";
@@ -151,7 +150,7 @@ impl State {
                         );
                         self.focus_popup(pipe_message, pane_id);
                     }
-                    TransientTogglePlan::CloseAndHideFloatingLayer(pane_id) => {
+                    TransientTogglePlan::ToggleFocused(pane_id) => {
                         self.close_displaced_configured_popups(
                             &request,
                             &snapshots,
@@ -168,7 +167,7 @@ impl State {
                                 );
                             }
                             TransientPopupToggleCloseBehavior::Hide => {
-                                self.hide_popup(pipe_message);
+                                self.hide_popup(pipe_message, pane_id);
                             }
                         }
                     }
@@ -268,7 +267,7 @@ impl State {
     }
 
     fn focus_popup(&self, pipe_message: &PipeMessage, pane_id: PaneId) {
-        focus_pane_with_id(pane_id, true, false);
+        show_pane_with_id(pane_id, true, true);
         self.respond(pipe_message, RESULT_FOCUSED);
     }
 
@@ -304,11 +303,9 @@ impl State {
         }
     }
 
-    fn hide_popup(&self, pipe_message: &PipeMessage) {
-        match hide_floating_panes(None) {
-            Ok(_) => self.respond(pipe_message, RESULT_HIDDEN),
-            Err(_) => self.respond(pipe_message, RESULT_HIDDEN_FLOATING_CLEANUP_FAILED),
-        }
+    fn hide_popup(&self, pipe_message: &PipeMessage, pane_id: PaneId) {
+        hide_pane_with_id(pane_id);
+        self.respond(pipe_message, RESULT_HIDDEN);
     }
 
     fn respond(&self, pipe_message: &PipeMessage, result: &str) {

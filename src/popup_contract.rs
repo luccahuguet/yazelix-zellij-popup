@@ -112,7 +112,7 @@ pub struct TransientPaneCloseCandidate<'a, Id> {
 pub enum TransientTogglePlan<Id> {
     Open,
     Focus(Id),
-    CloseAndHideFloatingLayer(Id),
+    ToggleFocused(Id),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -484,9 +484,7 @@ pub fn resolve_transient_toggle_plan_by_identity<Id: Copy>(
     identity: TransientPaneIdentityView<'_>,
 ) -> TransientTogglePlan<Id> {
     match select_transient_pane_by_identity(panes, identity) {
-        Some(pane) if pane.is_focused => {
-            TransientTogglePlan::CloseAndHideFloatingLayer(pane.pane_id)
-        }
+        Some(pane) if pane.is_focused => TransientTogglePlan::ToggleFocused(pane.pane_id),
         Some(pane) => TransientTogglePlan::Focus(pane.pane_id),
         None => TransientTogglePlan::Open,
     }
@@ -1089,7 +1087,7 @@ mod tests {
     }
 
     #[test]
-    fn toggle_plan_uses_title_or_command_marker_and_closes_focused_popup() {
+    fn toggle_plan_uses_title_or_command_marker_and_toggles_focused_popup() {
         let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
             "popups",
             r#"
@@ -1105,7 +1103,7 @@ mod tests {
 
         assert_eq!(
             resolve_transient_toggle_plan_by_identity(&focused, request.spec.identity()),
-            TransientTogglePlan::CloseAndHideFloatingLayer(11)
+            TransientTogglePlan::ToggleFocused(11)
         );
         assert_eq!(
             super::select_transient_pane_by_identity(&focused, request.spec.identity()),
