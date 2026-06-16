@@ -35,6 +35,7 @@
           packageAttr = "yazelix_zellij_popup";
           wasmPath = "share/yazelix_zellij_popup/yzpp.wasm";
           wasmTarget = "wasm32-wasip1";
+          cargoAuditableDisabled = true;
           cargoBuildHookDisabled = true;
           preBuildPreservesNixRustToolchain = true;
           wasmTargetRustcEnvPinned = true;
@@ -46,6 +47,7 @@
           version = "0.1.0";
           src = pkgs.lib.cleanSource ./.;
           cargoLock.lockFile = ./Cargo.lock;
+          auditable = !zellijPluginWasmPackageContract.cargoAuditableDisabled;
           nativeBuildInputs = [ pkgs.pkg-config ];
           buildInputs = [ pkgs.openssl ];
           dontCargoBuild = zellijPluginWasmPackageContract.cargoBuildHookDisabled;
