@@ -104,9 +104,10 @@ pub struct TransientPaneState<Id> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct TransientPaneCloseCandidate<'a, Id> {
+pub struct TransientPaneDisplacementCandidate<'a, Id> {
     pub pane_id: Id,
     pub on_close: Option<&'a TransientPopupCommandHook>,
+    pub toggle_close_behavior: TransientPopupToggleCloseBehavior,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -270,7 +271,7 @@ impl ConfiguredPopupSpecs {
         panes: &[TransientPaneSnapshot<'_, Id>],
         current_spec_id: &str,
         current_pane_id: Option<Id>,
-    ) -> Vec<TransientPaneCloseCandidate<'a, Id>> {
+    ) -> Vec<TransientPaneDisplacementCandidate<'a, Id>> {
         let mut candidates = Vec::new();
 
         for (spec_id, spec) in &self.specs {
@@ -283,18 +284,19 @@ impl ConfiguredPopupSpecs {
                 continue;
             };
             if current_pane_id == Some(pane.pane_id)
-                || candidates
-                    .iter()
-                    .any(|candidate: &TransientPaneCloseCandidate<'_, Id>| {
+                || candidates.iter().any(
+                    |candidate: &TransientPaneDisplacementCandidate<'_, Id>| {
                         candidate.pane_id == pane.pane_id
-                    })
+                    },
+                )
             {
                 continue;
             }
 
-            candidates.push(TransientPaneCloseCandidate {
+            candidates.push(TransientPaneDisplacementCandidate {
                 pane_id: pane.pane_id,
                 on_close: spec.on_close.as_ref(),
+                toggle_close_behavior: spec.toggle_close_behavior,
             });
         }
 
@@ -800,7 +802,7 @@ fn hook_config_field(key: &str) -> Option<PopupCommandHookField> {
 mod tests {
     use super::{
         resolve_transient_toggle_plan_by_identity, ConfiguredPopupSpecs, PopupMessageRequestError,
-        TransientPaneCloseCandidate, TransientPaneSnapshot, TransientPaneState,
+        TransientPaneDisplacementCandidate, TransientPaneSnapshot, TransientPaneState,
         TransientPopupAction, TransientPopupToggleCloseBehavior, TransientTogglePlan,
     };
     use std::collections::BTreeMap;
@@ -845,6 +847,23 @@ mod tests {
             is_suppressed: true,
             is_focused: false,
         }
+    }
+
+    fn keep_alive_and_gitui_specs() -> ConfiguredPopupSpecs {
+        ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                process_monitor {
+                    command "yzx"
+                    arg_1 "popup_run"
+                    arg_2 "btm"
+                    toggle_close_behavior "hide"
+                }
+                gitui {
+                    command "gitui"
+                }
+            "#,
+        )]))
     }
 
     #[test]
@@ -1234,9 +1253,10 @@ mod tests {
 
         assert_eq!(
             specs.select_other_configured_panes(&panes, request.spec.id.as_str(), Some(22)),
-            vec![TransientPaneCloseCandidate {
+            vec![TransientPaneDisplacementCandidate {
                 pane_id: 11,
                 on_close: None,
+                toggle_close_behavior: TransientPopupToggleCloseBehavior::Close,
             }]
         );
     }
@@ -1244,20 +1264,7 @@ mod tests {
     #[test]
     // Regression: hidden keep-alive panes are live state, not displaced visible popup clutter.
     fn displaced_popup_cleanup_ignores_suppressed_popup_panes() {
-        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
-            "popups",
-            r#"
-                process_monitor {
-                    command "yzx"
-                    arg_1 "popup_run"
-                    arg_2 "btm"
-                    toggle_close_behavior "hide"
-                }
-                gitui {
-                    command "gitui"
-                }
-            "#,
-        )]));
+        let specs = keep_alive_and_gitui_specs();
         let request = specs
             .request_from_message("toggle", Some("gitui"))
             .expect("request");
@@ -1268,7 +1275,31 @@ mod tests {
 
         assert_eq!(
             specs.select_other_configured_panes(&panes, request.spec.id.as_str(), Some(11)),
-            Vec::<TransientPaneCloseCandidate<'_, i32>>::new()
+            Vec::<TransientPaneDisplacementCandidate<'_, i32>>::new()
+        );
+    }
+
+    #[test]
+    // Regression: displaced keep-alive popups must hide instead of losing process state.
+    fn displaced_popup_cleanup_marks_visible_keep_alive_popup_for_hiding() {
+        let specs = keep_alive_and_gitui_specs();
+        let panes = [
+            transient_pane(
+                10,
+                "process_monitor_popup",
+                Some("yzx popup_run btm"),
+                false,
+            ),
+            transient_pane(11, "gitui_popup", Some("gitui"), true),
+        ];
+
+        assert_eq!(
+            specs.select_other_configured_panes(&panes, "gitui", Some(11)),
+            vec![TransientPaneDisplacementCandidate {
+                pane_id: 10,
+                on_close: None,
+                toggle_close_behavior: TransientPopupToggleCloseBehavior::Hide,
+            }]
         );
     }
 
@@ -1299,9 +1330,10 @@ mod tests {
 
         assert_eq!(
             specs.select_other_configured_panes(&panes, "active", Some(22)),
-            vec![TransientPaneCloseCandidate {
+            vec![TransientPaneDisplacementCandidate {
                 pane_id: 11,
                 on_close: None,
+                toggle_close_behavior: TransientPopupToggleCloseBehavior::Close,
             }]
         );
     }

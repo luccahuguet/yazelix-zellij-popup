@@ -114,7 +114,7 @@ popup {
 }
 ```
 
-With `hide`, pressing the toggle key while the popup is focused hides that popup pane without killing the popup process. Pressing the toggle key again shows and focuses the existing pane. The explicit `close` action still closes the pane and runs `on_close`.
+With `hide`, pressing the toggle key while the popup is focused or replacing it with another configured popup hides that pane without killing the popup process. Pressing the toggle key again shows and focuses the existing pane. The explicit `close` action still closes the pane and runs `on_close`.
 
 For multiple popups in the same plugin config, use a nested `popups` block and send the popup id as the payload:
 

@@ -134,7 +134,7 @@ impl State {
                 match resolve_transient_toggle_plan_by_identity(&snapshots, request.spec.identity())
                 {
                     TransientTogglePlan::Open => {
-                        self.close_displaced_configured_popups(
+                        self.displace_other_configured_popups(
                             &request,
                             &snapshots,
                             None,
@@ -143,7 +143,7 @@ impl State {
                         self.open_popup(pipe_message, &request, &fallback_cwd)
                     }
                     TransientTogglePlan::Focus(pane_id) => {
-                        self.close_displaced_configured_popups(
+                        self.displace_other_configured_popups(
                             &request,
                             &snapshots,
                             Some(pane_id),
@@ -152,7 +152,7 @@ impl State {
                         self.focus_popup(pipe_message, pane_id, request.spec.geometry());
                     }
                     TransientTogglePlan::ToggleFocused(pane_id) => {
-                        self.close_displaced_configured_popups(
+                        self.displace_other_configured_popups(
                             &request,
                             &snapshots,
                             Some(pane_id),
@@ -175,13 +175,13 @@ impl State {
                 }
             }
             TransientPopupAction::Open => {
-                self.close_displaced_configured_popups(&request, &snapshots, None, &fallback_cwd);
+                self.displace_other_configured_popups(&request, &snapshots, None, &fallback_cwd);
                 self.open_popup(pipe_message, &request, &fallback_cwd);
             }
             TransientPopupAction::Focus => {
                 match select_transient_pane_by_identity(&snapshots, request.spec.identity()) {
                     Some(pane) => {
-                        self.close_displaced_configured_popups(
+                        self.displace_other_configured_popups(
                             &request,
                             &snapshots,
                             Some(pane.pane_id),
@@ -195,7 +195,7 @@ impl State {
             TransientPopupAction::Close => {
                 match select_transient_pane_by_identity(&snapshots, request.spec.identity()) {
                     Some(pane) => {
-                        self.close_displaced_configured_popups(
+                        self.displace_other_configured_popups(
                             &request,
                             &snapshots,
                             Some(pane.pane_id),
@@ -280,7 +280,7 @@ impl State {
         self.respond(pipe_message, RESULT_FOCUSED);
     }
 
-    fn close_displaced_configured_popups(
+    fn displace_other_configured_popups(
         &self,
         request: &TransientPopupPipeRequest,
         snapshots: &[TransientPaneSnapshot<'_, PaneId>],
@@ -292,8 +292,13 @@ impl State {
             request.spec.id.as_str(),
             current_pane_id,
         ) {
-            close_pane_with_id(candidate.pane_id);
-            run_on_close_hook(candidate.on_close, fallback_cwd);
+            match candidate.toggle_close_behavior {
+                TransientPopupToggleCloseBehavior::Close => {
+                    close_pane_with_id(candidate.pane_id);
+                    run_on_close_hook(candidate.on_close, fallback_cwd);
+                }
+                TransientPopupToggleCloseBehavior::Hide => hide_pane_with_id(candidate.pane_id),
+            }
         }
     }
 
