@@ -1,11 +1,15 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
-use yazelix_zellij_popup::popup_contract::{
-    resolve_transient_toggle_plan_by_identity, select_transient_pane_by_identity,
-    ConfiguredPopupSpecs, PopupMessageRequestError, TransientPaneGeometry, TransientPaneSnapshot,
-    TransientPopupAction, TransientPopupCommandHook, TransientPopupPipeRequest,
-    TransientPopupToggleCloseBehavior, TransientTogglePlan,
+use yazelix_zellij_popup::{
+    floating_coordinates,
+    popup_contract::{
+        resolve_transient_toggle_plan_by_identity, select_transient_pane_by_identity,
+        ConfiguredPopupSpecs, PopupMessageRequestError, TransientPaneGeometry,
+        TransientPaneSnapshot, TransientPopupAction, TransientPopupCommandHook,
+        TransientPopupPipeRequest, TransientPopupToggleCloseBehavior, TransientTogglePlan,
+    },
+    PopupViewport,
 };
 use zellij_tile::prelude::*;
 
@@ -23,11 +27,17 @@ const RESULT_OPENED: &str = "opened";
 
 #[derive(Default)]
 struct State {
-    active_tab_position: Option<usize>,
+    active_tab: Option<ActiveTab>,
     terminal_panes_by_tab: HashMap<usize, Vec<TerminalPane>>,
     initial_cwd: PathBuf,
     permissions_granted: bool,
     popup_specs: ConfiguredPopupSpecs,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ActiveTab {
+    position: usize,
+    viewport: PopupViewport,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,8 +74,13 @@ impl ZellijPlugin for State {
     fn update(&mut self, event: Event) -> bool {
         match event {
             Event::TabUpdate(tabs) => {
-                self.active_tab_position =
-                    tabs.iter().find(|tab| tab.active).map(|tab| tab.position);
+                self.active_tab = tabs.iter().find(|tab| tab.active).map(|tab| ActiveTab {
+                    position: tab.position,
+                    viewport: PopupViewport {
+                        columns: tab.viewport_columns,
+                        rows: tab.viewport_rows,
+                    },
+                });
             }
             Event::PaneUpdate(pane_manifest) => {
                 self.terminal_panes_by_tab = build_terminal_panes_by_tab(&pane_manifest);
@@ -113,13 +128,13 @@ impl State {
         pipe_message: &PipeMessage,
         request: TransientPopupPipeRequest,
     ) {
-        let Some(active_tab_position) = self.ensure_ready(pipe_message) else {
+        let Some(active_tab) = self.ensure_ready(pipe_message) else {
             return;
         };
 
         let terminal_panes = self
             .terminal_panes_by_tab
-            .get(&active_tab_position)
+            .get(&active_tab.position)
             .cloned()
             .unwrap_or_default();
         let snapshots: Vec<TransientPaneSnapshot<'_, PaneId>> = terminal_panes
@@ -127,7 +142,7 @@ impl State {
             .map(|pane| pane.transient_snapshot())
             .collect();
 
-        let fallback_cwd = self.launch_fallback_cwd(active_tab_position);
+        let fallback_cwd = self.launch_fallback_cwd(active_tab.position);
 
         match request.action {
             TransientPopupAction::Toggle => {
@@ -140,7 +155,7 @@ impl State {
                             None,
                             &fallback_cwd,
                         );
-                        self.open_popup(pipe_message, &request, &fallback_cwd)
+                        self.open_popup(pipe_message, &request, &fallback_cwd, active_tab.viewport)
                     }
                     TransientTogglePlan::Focus(pane_id) => {
                         self.displace_other_configured_popups(
@@ -149,7 +164,12 @@ impl State {
                             Some(pane_id),
                             &fallback_cwd,
                         );
-                        self.focus_popup(pipe_message, pane_id, request.spec.geometry());
+                        self.focus_popup(
+                            pipe_message,
+                            pane_id,
+                            request.spec.geometry(),
+                            active_tab.viewport,
+                        );
                     }
                     TransientTogglePlan::ToggleFocused(pane_id) => {
                         self.displace_other_configured_popups(
@@ -176,7 +196,7 @@ impl State {
             }
             TransientPopupAction::Open => {
                 self.displace_other_configured_popups(&request, &snapshots, None, &fallback_cwd);
-                self.open_popup(pipe_message, &request, &fallback_cwd);
+                self.open_popup(pipe_message, &request, &fallback_cwd, active_tab.viewport);
             }
             TransientPopupAction::Focus => {
                 match select_transient_pane_by_identity(&snapshots, request.spec.identity()) {
@@ -187,7 +207,12 @@ impl State {
                             Some(pane.pane_id),
                             &fallback_cwd,
                         );
-                        self.focus_popup(pipe_message, pane.pane_id, request.spec.geometry());
+                        self.focus_popup(
+                            pipe_message,
+                            pane.pane_id,
+                            request.spec.geometry(),
+                            active_tab.viewport,
+                        );
                     }
                     None => self.respond(pipe_message, RESULT_MISSING),
                 }
@@ -214,18 +239,18 @@ impl State {
         }
     }
 
-    fn ensure_ready(&self, pipe_message: &PipeMessage) -> Option<usize> {
+    fn ensure_ready(&self, pipe_message: &PipeMessage) -> Option<ActiveTab> {
         if !self.permissions_granted {
             self.respond(pipe_message, RESULT_DENIED);
             return None;
         }
 
-        let Some(active_tab_position) = self.active_tab_position else {
+        let Some(active_tab) = self.active_tab else {
             self.respond(pipe_message, RESULT_NOT_READY);
             return None;
         };
 
-        Some(active_tab_position)
+        Some(active_tab)
     }
 
     fn launch_fallback_cwd(&self, active_tab_position: usize) -> String {
@@ -243,6 +268,7 @@ impl State {
         pipe_message: &PipeMessage,
         request: &TransientPopupPipeRequest,
         fallback_cwd: &str,
+        viewport: PopupViewport,
     ) {
         let Some(launch_plan) = request.launch_plan(fallback_cwd) else {
             self.respond(pipe_message, RESULT_INVALID_PAYLOAD);
@@ -255,7 +281,7 @@ impl State {
         };
         let pane_id = open_command_pane_floating(
             command_to_run,
-            floating_coordinates(launch_plan.geometry),
+            floating_coordinates(launch_plan.geometry, Some(viewport)),
             BTreeMap::new(),
         );
 
@@ -272,9 +298,12 @@ impl State {
         pipe_message: &PipeMessage,
         pane_id: PaneId,
         geometry: Option<TransientPaneGeometry>,
+        viewport: PopupViewport,
     ) {
         show_pane_with_id(pane_id, true, true);
-        if let Some(coordinates) = geometry.and_then(floating_coordinates) {
+        if let Some(coordinates) =
+            geometry.and_then(|geometry| floating_coordinates(geometry, Some(viewport)))
+        {
             change_floating_panes_coordinates(vec![(pane_id, coordinates)]);
         }
         self.respond(pipe_message, RESULT_FOCUSED);
@@ -364,22 +393,6 @@ fn build_terminal_panes_by_tab(pane_manifest: &PaneManifest) -> HashMap<usize, V
             (*tab_position, terminal_panes)
         })
         .collect()
-}
-
-fn floating_coordinates(geometry: TransientPaneGeometry) -> Option<FloatingPaneCoordinates> {
-    let width_arg = format!("{}%", geometry.width_percent);
-    let height_arg = format!("{}%", geometry.height_percent);
-    let x_offset = ((100 - geometry.width_percent) / 2).to_string() + "%";
-    let y_offset = ((100 - geometry.height_percent) / 2).to_string() + "%";
-
-    FloatingPaneCoordinates::new(
-        Some(x_offset),
-        Some(y_offset),
-        Some(width_arg),
-        Some(height_arg),
-        None,
-        None,
-    )
 }
 
 fn run_on_close_hook(on_close: Option<&TransientPopupCommandHook>, fallback_cwd: &str) {

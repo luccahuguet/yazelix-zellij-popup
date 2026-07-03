@@ -10,6 +10,8 @@ const DEFAULT_POPUP_CONFIG_KEY: &str = "popup";
 const NAMED_POPUPS_CONFIG_KEY: &str = "popups";
 const DEFAULT_WIDTH_PERCENT: usize = 90;
 const DEFAULT_HEIGHT_PERCENT: usize = 85;
+const DEFAULT_SIDE_MARGIN: usize = 0;
+const DEFAULT_VERTICAL_MARGIN: usize = 0;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +46,10 @@ pub struct TransientPopupSpec {
     pub toggle_close_behavior: TransientPopupToggleCloseBehavior,
     pub width_percent: usize,
     pub height_percent: usize,
+    #[serde(default)]
+    pub side_margin: usize,
+    #[serde(default)]
+    pub vertical_margin: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -121,6 +127,8 @@ pub enum TransientTogglePlan<Id> {
 pub struct TransientPaneGeometry {
     pub width_percent: usize,
     pub height_percent: usize,
+    pub side_margin: usize,
+    pub vertical_margin: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -157,6 +165,8 @@ struct PopupSpecDraft {
     toggle_close_behavior: Option<String>,
     width_percent: Option<String>,
     height_percent: Option<String>,
+    side_margin: Option<String>,
+    vertical_margin: Option<String>,
     invalid: bool,
 }
 
@@ -324,6 +334,8 @@ impl TransientPopupSpec {
         Some(TransientPaneGeometry {
             width_percent: self.width_percent,
             height_percent: self.height_percent,
+            side_margin: self.side_margin,
+            vertical_margin: self.vertical_margin,
         })
     }
 
@@ -552,6 +564,8 @@ fn build_configured_spec(id: &str, draft: PopupSpecDraft) -> Option<TransientPop
         toggle_close_behavior: parse_toggle_close_behavior(draft.toggle_close_behavior)?,
         width_percent: parse_percent(draft.width_percent, DEFAULT_WIDTH_PERCENT)?,
         height_percent: parse_percent(draft.height_percent, DEFAULT_HEIGHT_PERCENT)?,
+        side_margin: parse_margin(draft.side_margin, DEFAULT_SIDE_MARGIN)?,
+        vertical_margin: parse_margin(draft.vertical_margin, DEFAULT_VERTICAL_MARGIN)?,
     })
 }
 
@@ -682,6 +696,8 @@ fn apply_config_field(draft: &mut PopupSpecDraft, field: PopupConfigField, value
         PopupConfigField::ToggleCloseBehavior => draft.toggle_close_behavior = Some(value),
         PopupConfigField::WidthPercent => draft.width_percent = Some(value),
         PopupConfigField::HeightPercent => draft.height_percent = Some(value),
+        PopupConfigField::SideMargin => draft.side_margin = Some(value),
+        PopupConfigField::VerticalMargin => draft.vertical_margin = Some(value),
         PopupConfigField::Arg(index) => {
             if index == 0 {
                 draft.invalid = true;
@@ -744,6 +760,13 @@ fn parse_percent(value: Option<String>, default: usize) -> Option<usize> {
     }
 }
 
+fn parse_margin(value: Option<String>, default: usize) -> Option<usize> {
+    match value {
+        Some(value) => value.trim().parse::<usize>().ok(),
+        None => Some(default),
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PopupConfigField {
     Command,
@@ -753,6 +776,8 @@ enum PopupConfigField {
     ToggleCloseBehavior,
     WidthPercent,
     HeightPercent,
+    SideMargin,
+    VerticalMargin,
     Arg(usize),
 }
 
@@ -780,6 +805,10 @@ fn popup_config_field(key: &str) -> Option<PopupConfigField> {
         Some(PopupConfigField::WidthPercent)
     } else if key == "height_percent" {
         Some(PopupConfigField::HeightPercent)
+    } else if key == "side_margin" {
+        Some(PopupConfigField::SideMargin)
+    } else if key == "vertical_margin" {
+        Some(PopupConfigField::VerticalMargin)
     } else {
         None
     }
@@ -802,8 +831,9 @@ fn hook_config_field(key: &str) -> Option<PopupCommandHookField> {
 mod tests {
     use super::{
         resolve_transient_toggle_plan_by_identity, ConfiguredPopupSpecs, PopupMessageRequestError,
-        TransientPaneDisplacementCandidate, TransientPaneSnapshot, TransientPaneState,
-        TransientPopupAction, TransientPopupToggleCloseBehavior, TransientTogglePlan,
+        TransientPaneDisplacementCandidate, TransientPaneGeometry, TransientPaneSnapshot,
+        TransientPaneState, TransientPopupAction, TransientPopupToggleCloseBehavior,
+        TransientTogglePlan,
     };
     use std::collections::BTreeMap;
 
@@ -877,6 +907,8 @@ mod tests {
                     cwd "."
                     width_percent 90
                     height_percent 85
+                    side_margin 2
+                    vertical_margin 1
                 "#,
         )]));
 
@@ -891,6 +923,15 @@ mod tests {
         assert_eq!(
             request.spec.toggle_close_behavior,
             TransientPopupToggleCloseBehavior::Close
+        );
+        assert_eq!(
+            request.spec.geometry(),
+            Some(TransientPaneGeometry {
+                width_percent: 90,
+                height_percent: 85,
+                side_margin: 2,
+                vertical_margin: 1,
+            })
         );
         assert_eq!(
             request.launch_plan("/fallback").expect("launch plan").cwd,
