@@ -27,6 +27,11 @@ Add the plugin and a popup spec to your Zellij config:
 ```kdl
 plugins {
     yzpp location="file:/path/to/yzpp.wasm" {
+        popup_defaults {
+            side_margin 1
+            vertical_margin 0
+        }
+
         popup {
             command "gitui"
             pane_title "gitui_popup"
@@ -85,8 +90,33 @@ Optional:
 - `toggle_close_behavior`, either `close` or `hide`, defaulting to `close`
 - `width_percent`, defaulting to `90`
 - `height_percent`, defaulting to `85`
+- `side_margin`, defaulting to `popup_defaults.side_margin` or `0`
+- `vertical_margin`, defaulting to `popup_defaults.vertical_margin` or `0`
 
 Width and height must be integers from `1` through `100`. Commands are argv, not shell strings.
+
+Use `popup_defaults` to share margins across configured popups:
+
+```kdl
+popup_defaults {
+    side_margin 1
+    vertical_margin 0
+}
+
+popups {
+    gitui {
+        command "gitui"
+    }
+
+    lazygit {
+        command "lazygit"
+        side_margin 3
+        vertical_margin 2
+    }
+}
+```
+
+Per-popup `side_margin` and `vertical_margin` override the shared defaults
 
 Hooks are also argv, not shell strings:
 

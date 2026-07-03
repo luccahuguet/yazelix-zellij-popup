@@ -3,6 +3,11 @@
 
 plugins {
     yzpp location="__YZPP_WASM__" {
+        popup_defaults {
+            side_margin 1
+            vertical_margin 0
+        }
+
         popup {
             command "gitui"
             pane_title "gitui_popup"

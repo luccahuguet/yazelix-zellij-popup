@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 const RAW_PIPE_NAME: &str = "transient_popup";
 const DEFAULT_SPEC_ID: &str = "default";
 const DEFAULT_POPUP_CONFIG_KEY: &str = "popup";
+const POPUP_DEFAULTS_CONFIG_KEY: &str = "popup_defaults";
 const NAMED_POPUPS_CONFIG_KEY: &str = "popups";
 const DEFAULT_WIDTH_PERCENT: usize = 90;
 const DEFAULT_HEIGHT_PERCENT: usize = 85;
@@ -178,6 +179,23 @@ struct PopupCommandHookDraft {
     invalid: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PopupSpecDefaults {
+    side_margin: usize,
+    vertical_margin: usize,
+    invalid: bool,
+}
+
+impl Default for PopupSpecDefaults {
+    fn default() -> Self {
+        Self {
+            side_margin: DEFAULT_SIDE_MARGIN,
+            vertical_margin: DEFAULT_VERTICAL_MARGIN,
+            invalid: false,
+        }
+    }
+}
+
 impl TransientPopupAction {
     pub fn from_pipe_name(pipe_name: &str) -> Option<Self> {
         match pipe_name {
@@ -193,6 +211,10 @@ impl TransientPopupAction {
 impl ConfiguredPopupSpecs {
     pub fn from_configuration(configuration: &BTreeMap<String, String>) -> Self {
         let mut drafts = BTreeMap::<String, PopupSpecDraft>::new();
+        let defaults = configuration
+            .get(POPUP_DEFAULTS_CONFIG_KEY)
+            .map(|raw_defaults| parse_popup_defaults(raw_defaults))
+            .unwrap_or_default();
 
         if let Some(raw_default_popup) = configuration.get(DEFAULT_POPUP_CONFIG_KEY) {
             parse_popup_fields_into(
@@ -210,7 +232,7 @@ impl ConfiguredPopupSpecs {
         let mut invalid_spec_ids = BTreeSet::new();
 
         for (id, draft) in drafts {
-            match build_configured_spec(&id, draft) {
+            match build_configured_spec(&id, draft, defaults) {
                 Some(spec) if spec.is_launchable() => {
                     specs.insert(id, spec);
                 }
@@ -540,8 +562,12 @@ fn parse_raw_request(
     }
 }
 
-fn build_configured_spec(id: &str, draft: PopupSpecDraft) -> Option<TransientPopupSpec> {
-    if id.trim().is_empty() || draft.invalid {
+fn build_configured_spec(
+    id: &str,
+    draft: PopupSpecDraft,
+    defaults: PopupSpecDefaults,
+) -> Option<TransientPopupSpec> {
+    if id.trim().is_empty() || draft.invalid || defaults.invalid {
         return None;
     }
 
@@ -564,8 +590,8 @@ fn build_configured_spec(id: &str, draft: PopupSpecDraft) -> Option<TransientPop
         toggle_close_behavior: parse_toggle_close_behavior(draft.toggle_close_behavior)?,
         width_percent: parse_percent(draft.width_percent, DEFAULT_WIDTH_PERCENT)?,
         height_percent: parse_percent(draft.height_percent, DEFAULT_HEIGHT_PERCENT)?,
-        side_margin: parse_margin(draft.side_margin, DEFAULT_SIDE_MARGIN)?,
-        vertical_margin: parse_margin(draft.vertical_margin, DEFAULT_VERTICAL_MARGIN)?,
+        side_margin: parse_margin(draft.side_margin, defaults.side_margin)?,
+        vertical_margin: parse_margin(draft.vertical_margin, defaults.vertical_margin)?,
     })
 }
 
@@ -624,6 +650,35 @@ fn parse_popup_fields_into(id: &str, raw: &str, draft: &mut PopupSpecDraft) {
     };
 
     parse_popup_fields_document_into(&document, draft);
+}
+
+fn parse_popup_defaults(raw: &str) -> PopupSpecDefaults {
+    let mut defaults = PopupSpecDefaults::default();
+    let Ok(document) = raw.parse::<KdlDocument>() else {
+        defaults.invalid = true;
+        return defaults;
+    };
+
+    for field_node in document.nodes() {
+        let field_name = field_node.name().value();
+        let Some(value) = popup_field_value(field_node) else {
+            defaults.invalid = true;
+            continue;
+        };
+        match field_name {
+            "side_margin" => match parse_margin(Some(value), DEFAULT_SIDE_MARGIN) {
+                Some(side_margin) => defaults.side_margin = side_margin,
+                None => defaults.invalid = true,
+            },
+            "vertical_margin" => match parse_margin(Some(value), DEFAULT_VERTICAL_MARGIN) {
+                Some(vertical_margin) => defaults.vertical_margin = vertical_margin,
+                None => defaults.invalid = true,
+            },
+            _ => defaults.invalid = true,
+        }
+    }
+
+    defaults
 }
 
 fn parse_popup_fields_document_into(document: &KdlDocument, draft: &mut PopupSpecDraft) {
@@ -940,6 +995,85 @@ mod tests {
     }
 
     #[test]
+    // Defends: plugin-level geometry defaults apply to configured popup specs.
+    fn popup_defaults_apply_margins_to_named_popups() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[
+            (
+                "popup_defaults",
+                r#"
+                    side_margin 1
+                    vertical_margin 0
+                "#,
+            ),
+            (
+                "popups",
+                r#"
+                    gitui {
+                        command "gitui"
+                    }
+                    lazygit {
+                        command "lazygit"
+                    }
+                "#,
+            ),
+        ]));
+
+        for popup_id in ["gitui", "lazygit"] {
+            let request = specs
+                .request_from_message("toggle", Some(popup_id))
+                .expect("named configured request");
+
+            assert_eq!(
+                request.spec.geometry(),
+                Some(TransientPaneGeometry {
+                    width_percent: 90,
+                    height_percent: 85,
+                    side_margin: 1,
+                    vertical_margin: 0,
+                })
+            );
+        }
+    }
+
+    #[test]
+    // Defends: per-popup geometry fields override plugin-level defaults.
+    fn popup_defaults_allow_per_popup_margin_overrides() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[
+            (
+                "popup_defaults",
+                r#"
+                    side_margin 1
+                    vertical_margin 0
+                "#,
+            ),
+            (
+                "popups",
+                r#"
+                    gitui {
+                        command "gitui"
+                        side_margin 3
+                        vertical_margin 2
+                    }
+                "#,
+            ),
+        ]));
+
+        let request = specs
+            .request_from_message("toggle", Some("gitui"))
+            .expect("named configured request");
+
+        assert_eq!(
+            request.spec.geometry(),
+            Some(TransientPaneGeometry {
+                width_percent: 90,
+                height_percent: 85,
+                side_margin: 3,
+                vertical_margin: 2,
+            })
+        );
+    }
+
+    #[test]
     fn relative_configured_cwd_resolves_against_focused_fallback() {
         let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
             "popup",
@@ -1151,6 +1285,34 @@ mod tests {
                 }
             "#,
         )]));
+
+        assert_eq!(
+            specs.request_from_message("toggle", Some("gitui")),
+            Err(PopupMessageRequestError::InvalidConfiguredSpec(
+                "gitui".into()
+            ))
+        );
+    }
+
+    #[test]
+    // Defends: invalid plugin-level defaults fail visibly instead of being ignored.
+    fn popup_defaults_return_invalid_config_for_bad_margin() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[
+            (
+                "popup_defaults",
+                r#"
+                    side_margin "wide"
+                "#,
+            ),
+            (
+                "popups",
+                r#"
+                    gitui {
+                        command "gitui"
+                    }
+                "#,
+            ),
+        ]));
 
         assert_eq!(
             specs.request_from_message("toggle", Some("gitui")),
