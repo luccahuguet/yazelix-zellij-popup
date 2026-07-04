@@ -44,6 +44,8 @@ pub struct TransientPopupSpec {
     #[serde(default)]
     pub on_close: Option<TransientPopupCommandHook>,
     #[serde(default)]
+    pub on_hide: Option<TransientPopupCommandHook>,
+    #[serde(default)]
     pub toggle_close_behavior: TransientPopupToggleCloseBehavior,
     pub width_percent: usize,
     pub height_percent: usize,
@@ -114,6 +116,7 @@ pub struct TransientPaneState<Id> {
 pub struct TransientPaneDisplacementCandidate<'a, Id> {
     pub pane_id: Id,
     pub on_close: Option<&'a TransientPopupCommandHook>,
+    pub on_hide: Option<&'a TransientPopupCommandHook>,
     pub toggle_close_behavior: TransientPopupToggleCloseBehavior,
 }
 
@@ -163,6 +166,7 @@ struct PopupSpecDraft {
     command_marker: Option<String>,
     cwd: Option<String>,
     on_close: Option<PopupCommandHookDraft>,
+    on_hide: Option<PopupCommandHookDraft>,
     toggle_close_behavior: Option<String>,
     width_percent: Option<String>,
     height_percent: Option<String>,
@@ -179,10 +183,12 @@ struct PopupCommandHookDraft {
     invalid: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 struct PopupSpecDefaults {
     side_margin: usize,
     vertical_margin: usize,
+    on_close: Option<TransientPopupCommandHook>,
+    on_hide: Option<TransientPopupCommandHook>,
     invalid: bool,
 }
 
@@ -191,6 +197,8 @@ impl Default for PopupSpecDefaults {
         Self {
             side_margin: DEFAULT_SIDE_MARGIN,
             vertical_margin: DEFAULT_VERTICAL_MARGIN,
+            on_close: None,
+            on_hide: None,
             invalid: false,
         }
     }
@@ -232,7 +240,7 @@ impl ConfiguredPopupSpecs {
         let mut invalid_spec_ids = BTreeSet::new();
 
         for (id, draft) in drafts {
-            match build_configured_spec(&id, draft, defaults) {
+            match build_configured_spec(&id, draft, &defaults) {
                 Some(spec) if spec.is_launchable() => {
                     specs.insert(id, spec);
                 }
@@ -328,6 +336,7 @@ impl ConfiguredPopupSpecs {
             candidates.push(TransientPaneDisplacementCandidate {
                 pane_id: pane.pane_id,
                 on_close: spec.on_close.as_ref(),
+                on_hide: spec.on_hide.as_ref(),
                 toggle_close_behavior: spec.toggle_close_behavior,
             });
         }
@@ -388,6 +397,10 @@ impl TransientPopupSpec {
                 .is_none_or(|cwd| !cwd.is_empty())
             && self
                 .on_close
+                .as_ref()
+                .is_none_or(TransientPopupCommandHook::is_launchable)
+            && self
+                .on_hide
                 .as_ref()
                 .is_none_or(TransientPopupCommandHook::is_launchable)
     }
@@ -565,7 +578,7 @@ fn parse_raw_request(
 fn build_configured_spec(
     id: &str,
     draft: PopupSpecDraft,
-    defaults: PopupSpecDefaults,
+    defaults: &PopupSpecDefaults,
 ) -> Option<TransientPopupSpec> {
     if id.trim().is_empty() || draft.invalid || defaults.invalid {
         return None;
@@ -585,7 +598,11 @@ fn build_configured_spec(
         cwd: trim_optional(draft.cwd),
         on_close: match draft.on_close {
             Some(hook) => Some(build_configured_hook(hook)?),
-            None => None,
+            None => defaults.on_close.clone(),
+        },
+        on_hide: match draft.on_hide {
+            Some(hook) => Some(build_configured_hook(hook)?),
+            None => defaults.on_hide.clone(),
         },
         toggle_close_behavior: parse_toggle_close_behavior(draft.toggle_close_behavior)?,
         width_percent: parse_percent(draft.width_percent, DEFAULT_WIDTH_PERCENT)?,
@@ -654,6 +671,8 @@ fn parse_popup_fields_into(id: &str, raw: &str, draft: &mut PopupSpecDraft) {
 
 fn parse_popup_defaults(raw: &str) -> PopupSpecDefaults {
     let mut defaults = PopupSpecDefaults::default();
+    let mut on_close = None;
+    let mut on_hide = None;
     let Ok(document) = raw.parse::<KdlDocument>() else {
         defaults.invalid = true;
         return defaults;
@@ -661,6 +680,18 @@ fn parse_popup_defaults(raw: &str) -> PopupSpecDefaults {
 
     for field_node in document.nodes() {
         let field_name = field_node.name().value();
+        match field_name {
+            "on_close" => {
+                parse_hook_node_into(field_node, on_close.get_or_insert_with(Default::default));
+                continue;
+            }
+            "on_hide" => {
+                parse_hook_node_into(field_node, on_hide.get_or_insert_with(Default::default));
+                continue;
+            }
+            _ => {}
+        }
+
         let Some(value) = popup_field_value(field_node) else {
             defaults.invalid = true;
             continue;
@@ -678,6 +709,19 @@ fn parse_popup_defaults(raw: &str) -> PopupSpecDefaults {
         }
     }
 
+    if let Some(hook) = on_close {
+        match build_configured_hook(hook) {
+            Some(hook) => defaults.on_close = Some(hook),
+            None => defaults.invalid = true,
+        }
+    }
+    if let Some(hook) = on_hide {
+        match build_configured_hook(hook) {
+            Some(hook) => defaults.on_hide = Some(hook),
+            None => defaults.invalid = true,
+        }
+    }
+
     defaults
 }
 
@@ -688,6 +732,13 @@ fn parse_popup_fields_document_into(document: &KdlDocument, draft: &mut PopupSpe
             parse_hook_node_into(
                 field_node,
                 draft.on_close.get_or_insert_with(Default::default),
+            );
+            continue;
+        }
+        if field_name == "on_hide" {
+            parse_hook_node_into(
+                field_node,
+                draft.on_hide.get_or_insert_with(Default::default),
             );
             continue;
         }
@@ -1074,6 +1125,95 @@ mod tests {
     }
 
     #[test]
+    // Defends: plugin-level hook defaults apply to configured popup specs.
+    fn popup_defaults_apply_hooks_to_named_popups() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[
+            (
+                "popup_defaults",
+                r#"
+                    on_close {
+                        command "hook"
+                        arg_1 "close"
+                    }
+                    on_hide {
+                        command "hook"
+                        arg_1 "hide"
+                    }
+                "#,
+            ),
+            (
+                "popups",
+                r#"
+                    gitui {
+                        command "gitui"
+                    }
+                "#,
+            ),
+        ]));
+
+        let request = specs
+            .request_from_message("toggle", Some("gitui"))
+            .expect("named configured request");
+        let close_plan = request
+            .spec
+            .on_close
+            .as_ref()
+            .and_then(|hook| hook.launch_plan("/repo"))
+            .expect("close hook plan");
+        let hide_plan = request
+            .spec
+            .on_hide
+            .as_ref()
+            .and_then(|hook| hook.launch_plan("/repo"))
+            .expect("hide hook plan");
+
+        assert_eq!(close_plan.command, vec!["hook", "close"]);
+        assert_eq!(hide_plan.command, vec!["hook", "hide"]);
+    }
+
+    #[test]
+    // Defends: per-popup hooks override the corresponding plugin-level hook default.
+    fn popup_defaults_allow_per_popup_hook_overrides() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[
+            (
+                "popup_defaults",
+                r#"
+                    on_hide {
+                        command "hook"
+                        arg_1 "default"
+                    }
+                "#,
+            ),
+            (
+                "popups",
+                r#"
+                    gitui {
+                        command "gitui"
+                        on_hide {
+                            command "hook"
+                            arg_1 "gitui"
+                            cwd "."
+                        }
+                    }
+                "#,
+            ),
+        ]));
+
+        let request = specs
+            .request_from_message("toggle", Some("gitui"))
+            .expect("named configured request");
+        let hook_plan = request
+            .spec
+            .on_hide
+            .as_ref()
+            .and_then(|hook| hook.launch_plan("/repo"))
+            .expect("hide hook plan");
+
+        assert_eq!(hook_plan.command, vec!["hook", "gitui"]);
+        assert_eq!(hook_plan.cwd, "/repo/.");
+    }
+
+    #[test]
     fn relative_configured_cwd_resolves_against_focused_fallback() {
         let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
             "popup",
@@ -1187,9 +1327,8 @@ mod tests {
                 lazygit {
                     command "lazygit"
                     on_close {
-                        command "yzx"
-                        arg_1 "sidebar"
-                        arg_2 "refresh"
+                        command "hook"
+                        arg_1 "close"
                         cwd "."
                     }
                 }
@@ -1206,7 +1345,38 @@ mod tests {
             .and_then(|hook| hook.launch_plan("/repo"))
             .expect("hook plan");
 
-        assert_eq!(hook_plan.command, vec!["yzx", "sidebar", "refresh"]);
+        assert_eq!(hook_plan.command, vec!["hook", "close"]);
+        assert_eq!(hook_plan.cwd, "/repo/.");
+    }
+
+    #[test]
+    // Defends: per-popup on_hide uses the same argv/cwd hook shape as on_close.
+    fn configured_spec_parses_on_hide_hook() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                lazygit {
+                    command "lazygit"
+                    on_hide {
+                        command "hook"
+                        arg_1 "hide"
+                        cwd "."
+                    }
+                }
+            "#,
+        )]));
+
+        let request = specs
+            .request_from_message("toggle", Some("lazygit"))
+            .expect("named configured request");
+        let hook_plan = request
+            .spec
+            .on_hide
+            .as_ref()
+            .and_then(|hook| hook.launch_plan("/repo"))
+            .expect("hook plan");
+
+        assert_eq!(hook_plan.command, vec!["hook", "hide"]);
         assert_eq!(hook_plan.cwd, "/repo/.");
     }
 
@@ -1218,7 +1388,30 @@ mod tests {
                 lazygit {
                     command "lazygit"
                     on_close {
-                        arg_1 "sidebar"
+                        arg_1 "close"
+                    }
+                }
+            "#,
+        )]));
+
+        assert_eq!(
+            specs.request_from_message("toggle", Some("lazygit")),
+            Err(PopupMessageRequestError::InvalidConfiguredSpec(
+                "lazygit".into()
+            ))
+        );
+    }
+
+    #[test]
+    // Defends: invalid per-popup on_hide hooks make the configured popup invalid.
+    fn configured_spec_rejects_invalid_on_hide_hook() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                lazygit {
+                    command "lazygit"
+                    on_hide {
+                        arg_1 "hide"
                     }
                 }
             "#,
@@ -1323,6 +1516,36 @@ mod tests {
     }
 
     #[test]
+    // Defends: invalid plugin-level hook defaults fail visibly instead of being ignored.
+    fn popup_defaults_return_invalid_config_for_bad_hook() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[
+            (
+                "popup_defaults",
+                r#"
+                    on_hide {
+                        arg_1 "hide"
+                    }
+                "#,
+            ),
+            (
+                "popups",
+                r#"
+                    gitui {
+                        command "gitui"
+                    }
+                "#,
+            ),
+        ]));
+
+        assert_eq!(
+            specs.request_from_message("toggle", Some("gitui")),
+            Err(PopupMessageRequestError::InvalidConfiguredSpec(
+                "gitui".into()
+            ))
+        );
+    }
+
+    #[test]
     fn raw_json_request_still_works_for_generated_callers() {
         let specs = ConfiguredPopupSpecs::default();
         let payload = r#"{
@@ -1333,6 +1556,9 @@ mod tests {
                 "command_marker": "gitui",
                 "command": ["gitui"],
                 "cwd": ".",
+                "on_hide": {
+                    "command": ["hook", "hide"]
+                },
                 "toggle_close_behavior": "hide",
                 "width_percent": 90,
                 "height_percent": 85
@@ -1348,6 +1574,16 @@ mod tests {
         assert_eq!(
             request.spec.toggle_close_behavior,
             TransientPopupToggleCloseBehavior::Hide
+        );
+        assert_eq!(
+            request
+                .spec
+                .on_hide
+                .as_ref()
+                .and_then(|hook| hook.launch_plan("/repo"))
+                .expect("hide hook plan")
+                .command,
+            vec!["hook", "hide"]
         );
     }
 
@@ -1459,6 +1695,7 @@ mod tests {
             vec![TransientPaneDisplacementCandidate {
                 pane_id: 11,
                 on_close: None,
+                on_hide: None,
                 toggle_close_behavior: TransientPopupToggleCloseBehavior::Close,
             }]
         );
@@ -1501,8 +1738,50 @@ mod tests {
             vec![TransientPaneDisplacementCandidate {
                 pane_id: 10,
                 on_close: None,
+                on_hide: None,
                 toggle_close_behavior: TransientPopupToggleCloseBehavior::Hide,
             }]
+        );
+    }
+
+    #[test]
+    // Defends: displaced hide-mode popups carry their on_hide hook plan.
+    fn displaced_keep_alive_popup_includes_on_hide_hook() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                process_monitor {
+                    command "btm"
+                    toggle_close_behavior "hide"
+                    on_hide {
+                        command "hook"
+                        arg_1 "hidden"
+                    }
+                }
+                gitui {
+                    command "gitui"
+                }
+            "#,
+        )]));
+        let panes = [
+            transient_pane(10, "process_monitor_popup", Some("btm"), false),
+            transient_pane(11, "gitui_popup", Some("gitui"), true),
+        ];
+        let candidates = specs.select_other_configured_panes(&panes, "gitui", Some(11));
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].pane_id, 10);
+        assert_eq!(
+            candidates[0].toggle_close_behavior,
+            TransientPopupToggleCloseBehavior::Hide
+        );
+        assert_eq!(
+            candidates[0]
+                .on_hide
+                .and_then(|hook| hook.launch_plan("/repo"))
+                .expect("hide hook plan")
+                .command,
+            vec!["hook", "hidden"]
         );
     }
 
@@ -1536,6 +1815,7 @@ mod tests {
             vec![TransientPaneDisplacementCandidate {
                 pane_id: 11,
                 on_close: None,
+                on_hide: None,
                 toggle_close_behavior: TransientPopupToggleCloseBehavior::Close,
             }]
         );

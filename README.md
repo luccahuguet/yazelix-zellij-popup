@@ -87,6 +87,7 @@ Optional:
 - `command_marker`, defaulting to the command path
 - `cwd`, defaulting to the focused terminal pane cwd; relative values resolve against that focused cwd
 - `on_close`, an optional command hook run when `yzpp` closes the popup through `toggle` or `close`
+- `on_hide`, an optional command hook run when `yzpp` hides the popup through focused `toggle` or popup displacement
 - `toggle_close_behavior`, either `close` or `hide`, defaulting to `close`
 - `width_percent`, defaulting to `90`
 - `height_percent`, defaulting to `85`
@@ -95,12 +96,22 @@ Optional:
 
 Width and height must be integers from `1` through `100`. Commands are argv, not shell strings.
 
-Use `popup_defaults` to share margins across configured popups:
+Use `popup_defaults` to share margins and lifecycle hooks across configured popups:
 
 ```kdl
 popup_defaults {
     side_margin 1
     vertical_margin 0
+
+    on_close {
+        command "hook"
+        arg_1 "close"
+    }
+
+    on_hide {
+        command "hook"
+        arg_1 "hide"
+    }
 }
 
 popups {
@@ -116,7 +127,7 @@ popups {
 }
 ```
 
-Per-popup `side_margin` and `vertical_margin` override the shared defaults
+Per-popup `side_margin`, `vertical_margin`, `on_close`, and `on_hide` override the shared defaults
 
 Hooks are also argv, not shell strings:
 
@@ -125,14 +136,19 @@ popup {
     command "lazygit"
     pane_title "lazygit_popup"
     on_close {
-        command "yzx"
-        arg_1 "sidebar"
-        arg_2 "refresh"
+        command "hook"
+        arg_1 "close"
+    }
+    on_hide {
+        command "hook"
+        arg_1 "hide"
     }
 }
 ```
 
 `on_close` runs only when `yzpp` closes the pane in response to `toggle` or `close`. It does not run when the child process exits on its own.
+
+`on_hide` runs only when `yzpp` hides the pane because a focused hide-mode popup was toggled or another configured popup displaced it. It does not run when the pane is opened, shown, focused, explicitly closed, or when the child process exits on its own.
 
 Use `toggle_close_behavior "hide"` for monitor TUIs that should keep process state between toggles:
 
@@ -144,7 +160,7 @@ popup {
 }
 ```
 
-With `hide`, pressing the toggle key while the popup is focused or replacing it with another configured popup hides that pane without killing the popup process. Pressing the toggle key again shows and focuses the existing pane. The explicit `close` action still closes the pane and runs `on_close`.
+With `hide`, pressing the toggle key while the popup is focused or replacing it with another configured popup hides that pane without killing the popup process and runs `on_hide`. Pressing the toggle key again shows and focuses the existing pane. The explicit `close` action still closes the pane and runs `on_close`.
 
 For multiple popups in the same plugin config, use a nested `popups` block and send the popup id as the payload:
 
@@ -185,6 +201,8 @@ MessagePlugin "yzpp" {
 ```
 
 That raw path exists for generated callers. Human-authored Zellij config should prefer configured popup specs plus `name "toggle"`.
+
+Raw JSON specs support the same optional `on_close` and `on_hide` hook objects as configured popup specs.
 
 ## Permissions
 

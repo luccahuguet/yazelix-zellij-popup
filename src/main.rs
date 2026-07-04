@@ -188,7 +188,12 @@ impl State {
                                 );
                             }
                             TransientPopupToggleCloseBehavior::Hide => {
-                                self.hide_popup(pipe_message, pane_id);
+                                self.hide_popup(
+                                    pipe_message,
+                                    pane_id,
+                                    request.spec.on_hide.as_ref(),
+                                    &fallback_cwd,
+                                );
                             }
                         }
                     }
@@ -324,9 +329,12 @@ impl State {
             match candidate.toggle_close_behavior {
                 TransientPopupToggleCloseBehavior::Close => {
                     close_pane_with_id(candidate.pane_id);
-                    run_on_close_hook(candidate.on_close, fallback_cwd);
+                    run_command_hook(candidate.on_close, fallback_cwd);
                 }
-                TransientPopupToggleCloseBehavior::Hide => hide_pane_with_id(candidate.pane_id),
+                TransientPopupToggleCloseBehavior::Hide => {
+                    hide_pane_with_id(candidate.pane_id);
+                    run_command_hook(candidate.on_hide, fallback_cwd);
+                }
             }
         }
     }
@@ -339,15 +347,22 @@ impl State {
         fallback_cwd: &str,
     ) {
         close_pane_with_id(pane_id);
-        run_on_close_hook(on_close, fallback_cwd);
+        run_command_hook(on_close, fallback_cwd);
         match hide_floating_panes(None) {
             Ok(_) => self.respond(pipe_message, RESULT_CLOSED),
             Err(_) => self.respond(pipe_message, RESULT_CLOSED_FLOATING_CLEANUP_FAILED),
         }
     }
 
-    fn hide_popup(&self, pipe_message: &PipeMessage, pane_id: PaneId) {
+    fn hide_popup(
+        &self,
+        pipe_message: &PipeMessage,
+        pane_id: PaneId,
+        on_hide: Option<&TransientPopupCommandHook>,
+        fallback_cwd: &str,
+    ) {
         hide_pane_with_id(pane_id);
+        run_command_hook(on_hide, fallback_cwd);
         self.respond(pipe_message, RESULT_HIDDEN);
     }
 
@@ -395,8 +410,8 @@ fn build_terminal_panes_by_tab(pane_manifest: &PaneManifest) -> HashMap<usize, V
         .collect()
 }
 
-fn run_on_close_hook(on_close: Option<&TransientPopupCommandHook>, fallback_cwd: &str) {
-    let Some(hook_plan) = on_close.and_then(|hook| hook.launch_plan(fallback_cwd)) else {
+fn run_command_hook(hook: Option<&TransientPopupCommandHook>, fallback_cwd: &str) {
+    let Some(hook_plan) = hook.and_then(|hook| hook.launch_plan(fallback_cwd)) else {
         return;
     };
 
