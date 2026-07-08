@@ -563,6 +563,23 @@ pub fn resolve_transient_toggle_plan_by_identity<Id: Copy>(
     }
 }
 
+/// Hidden keep-alive popups should restart when their process cwd no longer matches the
+/// focused-pane fallback used for a fresh launch. Unknown pane cwd keeps reuse.
+pub fn should_restart_suppressed_popup(
+    is_suppressed: bool,
+    pane_cwd: Option<&str>,
+    fallback_cwd: &str,
+) -> bool {
+    if !is_suppressed {
+        return false;
+    }
+    let Some(pane_cwd) = pane_cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) else {
+        return false;
+    };
+    let fallback_cwd = fallback_cwd.trim();
+    !fallback_cwd.is_empty() && pane_cwd.trim_end_matches('/') != fallback_cwd.trim_end_matches('/')
+}
+
 fn parse_raw_request(
     payload: Option<&str>,
 ) -> Result<TransientPopupPipeRequest, PopupMessageRequestError> {
@@ -936,10 +953,10 @@ fn hook_config_field(key: &str) -> Option<PopupCommandHookField> {
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_transient_toggle_plan_by_identity, ConfiguredPopupSpecs, PopupMessageRequestError,
-        TransientPaneDisplacementCandidate, TransientPaneGeometry, TransientPaneSnapshot,
-        TransientPaneState, TransientPopupAction, TransientPopupToggleCloseBehavior,
-        TransientTogglePlan,
+        resolve_transient_toggle_plan_by_identity, should_restart_suppressed_popup,
+        ConfiguredPopupSpecs, PopupMessageRequestError, TransientPaneDisplacementCandidate,
+        TransientPaneGeometry, TransientPaneSnapshot, TransientPaneState, TransientPopupAction,
+        TransientPopupToggleCloseBehavior, TransientTogglePlan,
     };
     use std::collections::BTreeMap;
 
@@ -1641,6 +1658,18 @@ mod tests {
         assert_eq!(
             resolve_transient_toggle_plan_by_identity(&hidden, request.spec.identity()),
             TransientTogglePlan::Focus(10)
+        );
+        assert!(
+            !should_restart_suppressed_popup(true, Some("/repo"), "/repo"),
+            "same cwd reuses the hidden keep-alive pane"
+        );
+        assert!(
+            should_restart_suppressed_popup(true, Some("/old"), "/repo"),
+            "cwd mismatch restarts the hidden keep-alive pane"
+        );
+        assert!(
+            !should_restart_suppressed_popup(true, None, "/repo"),
+            "unknown pane cwd keeps reuse"
         );
     }
 

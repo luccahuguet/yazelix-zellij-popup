@@ -5,9 +5,10 @@ use yazelix_zellij_popup::{
     floating_coordinates,
     popup_contract::{
         resolve_transient_toggle_plan_by_identity, select_transient_pane_by_identity,
-        ConfiguredPopupSpecs, PopupMessageRequestError, TransientPaneGeometry,
-        TransientPaneSnapshot, TransientPopupAction, TransientPopupCommandHook,
-        TransientPopupPipeRequest, TransientPopupToggleCloseBehavior, TransientTogglePlan,
+        should_restart_suppressed_popup, ConfiguredPopupSpecs, PopupMessageRequestError,
+        TransientPaneGeometry, TransientPaneSnapshot, TransientPopupAction,
+        TransientPopupCommandHook, TransientPopupPipeRequest, TransientPopupToggleCloseBehavior,
+        TransientTogglePlan,
     },
     PopupViewport,
 };
@@ -164,12 +165,34 @@ impl State {
                             Some(pane_id),
                             &fallback_cwd,
                         );
-                        self.focus_popup(
-                            pipe_message,
-                            pane_id,
-                            request.spec.geometry(),
-                            active_tab.viewport,
-                        );
+                        let is_suppressed = snapshots
+                            .iter()
+                            .find(|pane| pane.pane_id == pane_id)
+                            .is_some_and(|pane| pane.is_suppressed);
+                        let pane_cwd = get_pane_cwd(pane_id)
+                            .ok()
+                            .map(|cwd| cwd.display().to_string());
+                        if should_restart_suppressed_popup(
+                            is_suppressed,
+                            pane_cwd.as_deref(),
+                            &fallback_cwd,
+                        ) {
+                            close_pane_with_id(pane_id);
+                            run_command_hook(request.spec.on_close.as_ref(), &fallback_cwd);
+                            self.open_popup(
+                                pipe_message,
+                                &request,
+                                &fallback_cwd,
+                                active_tab.viewport,
+                            );
+                        } else {
+                            self.focus_popup(
+                                pipe_message,
+                                pane_id,
+                                request.spec.geometry(),
+                                active_tab.viewport,
+                            );
+                        }
                     }
                     TransientTogglePlan::ToggleFocused(pane_id) => {
                         self.displace_other_configured_popups(
