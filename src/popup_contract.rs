@@ -80,6 +80,14 @@ pub struct ConfiguredPopupSpecs {
     invalid_spec_ids: BTreeSet<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ConfiguredPopupRequest {
+    id: String,
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PopupMessageRequestError {
     UnknownAction,
@@ -268,7 +276,7 @@ impl ConfiguredPopupSpecs {
         let Some(action) = TransientPopupAction::from_pipe_name(pipe_name) else {
             return Err(PopupMessageRequestError::UnknownAction);
         };
-        let spec_id = self.resolve_requested_spec_id(payload)?;
+        let (spec_id, cwd) = self.resolve_configured_request(payload)?;
 
         if self.invalid_spec_ids.contains(&spec_id) {
             return Err(PopupMessageRequestError::InvalidConfiguredSpec(spec_id));
@@ -281,8 +289,33 @@ impl ConfiguredPopupSpecs {
             action,
             spec,
             args: vec![],
-            cwd: None,
+            cwd,
         })
+    }
+
+    fn resolve_configured_request(
+        &self,
+        payload: Option<&str>,
+    ) -> Result<(String, Option<String>), PopupMessageRequestError> {
+        let Some(payload) = payload.map(str::trim).filter(|value| !value.is_empty()) else {
+            return Ok((self.resolve_requested_spec_id(None)?, None));
+        };
+        if !payload.starts_with('{') {
+            return Ok((self.resolve_requested_spec_id(Some(payload))?, None));
+        }
+
+        let request = serde_json::from_str::<ConfiguredPopupRequest>(payload)
+            .map_err(|_| PopupMessageRequestError::InvalidPayload)?;
+        let id = request.id.trim();
+        let has_cwd = request.cwd.is_some();
+        let cwd = request
+            .cwd
+            .map(|cwd| cwd.trim().to_string())
+            .filter(|cwd| !cwd.is_empty());
+        if id.is_empty() || has_cwd && cwd.is_none() {
+            return Err(PopupMessageRequestError::InvalidPayload);
+        }
+        Ok((id.to_string(), cwd))
     }
 
     fn resolve_requested_spec_id(
@@ -564,11 +597,11 @@ pub fn resolve_transient_toggle_plan_by_identity<Id: Copy>(
 }
 
 /// Hidden keep-alive popups should restart when their process cwd no longer matches the
-/// focused-pane fallback used for a fresh launch. Unknown pane cwd keeps reuse.
+/// effective cwd of a fresh launch. Unknown pane cwd keeps reuse.
 pub fn should_restart_suppressed_popup(
     is_suppressed: bool,
     pane_cwd: Option<&str>,
-    fallback_cwd: &str,
+    effective_cwd: &str,
 ) -> bool {
     if !is_suppressed {
         return false;
@@ -576,8 +609,9 @@ pub fn should_restart_suppressed_popup(
     let Some(pane_cwd) = pane_cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) else {
         return false;
     };
-    let fallback_cwd = fallback_cwd.trim();
-    !fallback_cwd.is_empty() && pane_cwd.trim_end_matches('/') != fallback_cwd.trim_end_matches('/')
+    let effective_cwd = effective_cwd.trim();
+    !effective_cwd.is_empty()
+        && pane_cwd.trim_end_matches('/') != effective_cwd.trim_end_matches('/')
 }
 
 fn parse_raw_request(
@@ -1267,6 +1301,37 @@ mod tests {
             request.launch_plan("/repo").expect("launch plan").cwd,
             "/repo"
         );
+    }
+
+    #[test]
+    fn configured_request_cwd_overrides_focus_without_copying_the_spec() {
+        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
+            "popups",
+            r#"
+                agent {
+                    command "codex"
+                    pane_title "agent_popup"
+                    toggle_close_behavior "hide"
+                }
+            "#,
+        )]));
+
+        let request = specs
+            .request_from_message("toggle", Some(r#"{"id":"agent","cwd":"/repo"}"#))
+            .expect("configured request with explicit cwd");
+
+        assert_eq!(request.spec.id, "agent");
+        assert_eq!(request.launch_plan("/repo/docs").unwrap().cwd, "/repo");
+        assert!(!should_restart_suppressed_popup(
+            true,
+            Some("/repo"),
+            &request.launch_plan("/repo/docs").unwrap().cwd,
+        ));
+        assert!(should_restart_suppressed_popup(
+            true,
+            Some("/old"),
+            &request.launch_plan("/repo/docs").unwrap().cwd,
+        ));
     }
 
     #[test]

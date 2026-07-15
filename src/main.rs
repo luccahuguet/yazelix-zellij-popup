@@ -144,6 +144,10 @@ impl State {
             .collect();
 
         let fallback_cwd = self.launch_fallback_cwd(active_tab.position);
+        let request_cwd = request
+            .launch_plan(&fallback_cwd)
+            .map(|plan| plan.cwd)
+            .unwrap_or_else(|| fallback_cwd.clone());
 
         match request.action {
             TransientPopupAction::Toggle => {
@@ -175,10 +179,10 @@ impl State {
                         if should_restart_suppressed_popup(
                             is_suppressed,
                             pane_cwd.as_deref(),
-                            &fallback_cwd,
+                            &request_cwd,
                         ) {
                             close_pane_with_id(pane_id);
-                            run_command_hook(request.spec.on_close.as_ref(), &fallback_cwd);
+                            run_command_hook(request.spec.on_close.as_ref(), &request_cwd);
                             self.open_popup(
                                 pipe_message,
                                 &request,
@@ -207,7 +211,7 @@ impl State {
                                     pipe_message,
                                     pane_id,
                                     request.spec.on_close.as_ref(),
-                                    &fallback_cwd,
+                                    &request_cwd,
                                 );
                             }
                             TransientPopupToggleCloseBehavior::Hide => {
@@ -215,7 +219,7 @@ impl State {
                                     pipe_message,
                                     pane_id,
                                     request.spec.on_hide.as_ref(),
-                                    &fallback_cwd,
+                                    &request_cwd,
                                 );
                             }
                         }
@@ -258,7 +262,7 @@ impl State {
                             pipe_message,
                             pane.pane_id,
                             request.spec.on_close.as_ref(),
-                            &fallback_cwd,
+                            &request_cwd,
                         );
                     }
                     None => self.respond(pipe_message, RESULT_MISSING),
