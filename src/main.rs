@@ -318,9 +318,12 @@ impl State {
         );
 
         if let Some(pane_id) = pane_id {
-            if !request.spec.preserve_terminal_title {
-                rename_pane_with_id(pane_id, request.spec.pane_title.trim());
-            }
+            let pane_title = if request.spec.preserve_terminal_title {
+                ""
+            } else {
+                request.spec.pane_title.trim()
+            };
+            rename_pane_with_id(pane_id, pane_title);
             self.respond(pipe_message, RESULT_OPENED);
         } else {
             self.respond(pipe_message, RESULT_MISSING);

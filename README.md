@@ -84,7 +84,7 @@ Optional:
 
 - `arg_1`, `arg_2`, and so on for argv arguments
 - `pane_title`, defaulting to `default_popup`
-- `preserve_terminal_title`, defaulting to `false`; when `true`, pane identity uses the command marker and the application may publish its terminal title
+- `preserve_terminal_title`, defaulting to `false`; when `true`, the launch title is cleared, pane identity uses the command marker, and the application may publish its terminal title
 - `command_marker`, defaulting to the command path
 - `cwd`, defaulting to the focused terminal pane cwd; relative values resolve against that focused cwd
 - `on_close`, an optional command hook run when `yzpp` closes the popup through `toggle` or `close`
