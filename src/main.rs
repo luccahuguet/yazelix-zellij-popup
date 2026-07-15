@@ -5,7 +5,7 @@ use yazelix_zellij_popup::{
     floating_coordinates,
     popup_contract::{
         resolve_transient_toggle_plan_by_identity, select_transient_pane_by_identity,
-        should_restart_suppressed_popup, ConfiguredPopupSpecs, PopupMessageRequestError,
+        should_restart_popup_for_cwd, ConfiguredPopupSpecs, PopupMessageRequestError,
         TransientPaneGeometry, TransientPaneSnapshot, TransientPopupAction,
         TransientPopupCommandHook, TransientPopupPipeRequest, TransientPopupToggleCloseBehavior,
         TransientTogglePlan,
@@ -176,8 +176,8 @@ impl State {
                         let pane_cwd = get_pane_cwd(pane_id)
                             .ok()
                             .map(|cwd| cwd.display().to_string());
-                        if should_restart_suppressed_popup(
-                            is_suppressed,
+                        if should_restart_popup_for_cwd(
+                            is_suppressed || request.cwd.is_some(),
                             pane_cwd.as_deref(),
                             &request_cwd,
                         ) {

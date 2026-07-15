@@ -298,10 +298,19 @@ impl ConfiguredPopupSpecs {
         payload: Option<&str>,
     ) -> Result<(String, Option<String>), PopupMessageRequestError> {
         let Some(payload) = payload.map(str::trim).filter(|value| !value.is_empty()) else {
-            return Ok((self.resolve_requested_spec_id(None)?, None));
+            let spec_id = if self.specs.contains_key(DEFAULT_SPEC_ID)
+                || self.invalid_spec_ids.contains(DEFAULT_SPEC_ID)
+            {
+                DEFAULT_SPEC_ID.to_string()
+            } else if self.specs.len() == 1 && self.invalid_spec_ids.is_empty() {
+                self.specs.keys().next().cloned().unwrap_or_default()
+            } else {
+                return Err(PopupMessageRequestError::InvalidPayload);
+            };
+            return Ok((spec_id, None));
         };
         if !payload.starts_with('{') {
-            return Ok((self.resolve_requested_spec_id(Some(payload))?, None));
+            return Ok((payload.to_string(), None));
         }
 
         let request = serde_json::from_str::<ConfiguredPopupRequest>(payload)
@@ -316,27 +325,6 @@ impl ConfiguredPopupSpecs {
             return Err(PopupMessageRequestError::InvalidPayload);
         }
         Ok((id.to_string(), cwd))
-    }
-
-    fn resolve_requested_spec_id(
-        &self,
-        payload: Option<&str>,
-    ) -> Result<String, PopupMessageRequestError> {
-        if let Some(spec_id) = payload.map(str::trim).filter(|value| !value.is_empty()) {
-            return Ok(spec_id.to_string());
-        }
-
-        if self.specs.contains_key(DEFAULT_SPEC_ID)
-            || self.invalid_spec_ids.contains(DEFAULT_SPEC_ID)
-        {
-            return Ok(DEFAULT_SPEC_ID.to_string());
-        }
-
-        if self.specs.len() == 1 && self.invalid_spec_ids.is_empty() {
-            return Ok(self.specs.keys().next().cloned().unwrap_or_default());
-        }
-
-        Err(PopupMessageRequestError::InvalidPayload)
     }
 
     pub fn select_other_configured_panes<'a, Id: Copy + PartialEq>(
@@ -596,14 +584,14 @@ pub fn resolve_transient_toggle_plan_by_identity<Id: Copy>(
     }
 }
 
-/// Hidden keep-alive popups should restart when their process cwd no longer matches the
+/// Popups whose cwd must match should restart when their process cwd differs from the
 /// effective cwd of a fresh launch. Unknown pane cwd keeps reuse.
-pub fn should_restart_suppressed_popup(
-    is_suppressed: bool,
+pub fn should_restart_popup_for_cwd(
+    cwd_must_match: bool,
     pane_cwd: Option<&str>,
     effective_cwd: &str,
 ) -> bool {
-    if !is_suppressed {
+    if !cwd_must_match {
         return false;
     }
     let Some(pane_cwd) = pane_cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) else {
@@ -987,7 +975,7 @@ fn hook_config_field(key: &str) -> Option<PopupCommandHookField> {
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_transient_toggle_plan_by_identity, should_restart_suppressed_popup,
+        resolve_transient_toggle_plan_by_identity, should_restart_popup_for_cwd,
         ConfiguredPopupSpecs, PopupMessageRequestError, TransientPaneDisplacementCandidate,
         TransientPaneGeometry, TransientPaneSnapshot, TransientPaneState, TransientPopupAction,
         TransientPopupToggleCloseBehavior, TransientTogglePlan,
@@ -1322,12 +1310,12 @@ mod tests {
 
         assert_eq!(request.spec.id, "agent");
         assert_eq!(request.launch_plan("/repo/docs").unwrap().cwd, "/repo");
-        assert!(!should_restart_suppressed_popup(
+        assert!(!should_restart_popup_for_cwd(
             true,
             Some("/repo"),
             &request.launch_plan("/repo/docs").unwrap().cwd,
         ));
-        assert!(should_restart_suppressed_popup(
+        assert!(should_restart_popup_for_cwd(
             true,
             Some("/old"),
             &request.launch_plan("/repo/docs").unwrap().cwd,
@@ -1725,16 +1713,20 @@ mod tests {
             TransientTogglePlan::Focus(10)
         );
         assert!(
-            !should_restart_suppressed_popup(true, Some("/repo"), "/repo"),
+            !should_restart_popup_for_cwd(true, Some("/repo"), "/repo"),
             "same cwd reuses the hidden keep-alive pane"
         );
         assert!(
-            should_restart_suppressed_popup(true, Some("/old"), "/repo"),
+            should_restart_popup_for_cwd(true, Some("/old"), "/repo"),
             "cwd mismatch restarts the hidden keep-alive pane"
         );
         assert!(
-            !should_restart_suppressed_popup(true, None, "/repo"),
+            !should_restart_popup_for_cwd(true, None, "/repo"),
             "unknown pane cwd keeps reuse"
+        );
+        assert!(
+            !should_restart_popup_for_cwd(false, Some("/old"), "/repo"),
+            "legacy visible popups keep their focus-derived cwd"
         );
     }
 
