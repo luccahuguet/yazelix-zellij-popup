@@ -37,6 +37,8 @@ pub struct TransientPopupSpec {
     pub id: String,
     pub pane_title: String,
     #[serde(default)]
+    pub preserve_terminal_title: bool,
+    #[serde(default)]
     pub command_marker: Option<String>,
     pub command: Vec<String>,
     #[serde(default)]
@@ -171,6 +173,7 @@ struct PopupSpecDraft {
     command: Option<String>,
     args: BTreeMap<usize, String>,
     pane_title: Option<String>,
+    preserve_terminal_title: Option<String>,
     command_marker: Option<String>,
     cwd: Option<String>,
     on_close: Option<PopupCommandHookDraft>,
@@ -632,6 +635,7 @@ fn build_configured_spec(
     Some(TransientPopupSpec {
         id: id.trim().to_string(),
         pane_title: trim_optional(draft.pane_title).unwrap_or_else(|| format!("{id}_popup")),
+        preserve_terminal_title: parse_bool(draft.preserve_terminal_title, false)?,
         command_marker: trim_optional(draft.command_marker).or(Some(command_path)),
         command,
         cwd: trim_optional(draft.cwd),
@@ -836,6 +840,7 @@ fn apply_config_field(draft: &mut PopupSpecDraft, field: PopupConfigField, value
     match field {
         PopupConfigField::Command => draft.command = Some(value),
         PopupConfigField::PaneTitle => draft.pane_title = Some(value),
+        PopupConfigField::PreserveTerminalTitle => draft.preserve_terminal_title = Some(value),
         PopupConfigField::CommandMarker => draft.command_marker = Some(value),
         PopupConfigField::Cwd => draft.cwd = Some(value),
         PopupConfigField::ToggleCloseBehavior => draft.toggle_close_behavior = Some(value),
@@ -895,6 +900,15 @@ fn parse_toggle_close_behavior(value: Option<String>) -> Option<TransientPopupTo
     }
 }
 
+fn parse_bool(value: Option<String>, default: bool) -> Option<bool> {
+    match trim_optional(value).as_deref() {
+        None => Some(default),
+        Some("true") => Some(true),
+        Some("false") => Some(false),
+        Some(_) => None,
+    }
+}
+
 fn parse_percent(value: Option<String>, default: usize) -> Option<usize> {
     match value {
         Some(value) => {
@@ -916,6 +930,7 @@ fn parse_margin(value: Option<String>, default: usize) -> Option<usize> {
 enum PopupConfigField {
     Command,
     PaneTitle,
+    PreserveTerminalTitle,
     CommandMarker,
     Cwd,
     ToggleCloseBehavior,
@@ -940,6 +955,8 @@ fn popup_config_field(key: &str) -> Option<PopupConfigField> {
         Some(PopupConfigField::Command)
     } else if key == "pane_title" {
         Some(PopupConfigField::PaneTitle)
+    } else if key == "preserve_terminal_title" {
+        Some(PopupConfigField::PreserveTerminalTitle)
     } else if key == "command_marker" {
         Some(PopupConfigField::CommandMarker)
     } else if key == "cwd" {
@@ -1049,6 +1066,7 @@ mod tests {
                     command "gitui"
                     arg_1 "--watch"
                     pane_title "gitui_popup"
+                    preserve_terminal_title true
                     cwd "."
                     width_percent 90
                     height_percent 85
@@ -1065,6 +1083,7 @@ mod tests {
         assert_eq!(request.spec.id, "default");
         assert_eq!(request.spec.command, vec!["gitui", "--watch"]);
         assert_eq!(request.spec.command_marker.as_deref(), Some("gitui"));
+        assert!(request.spec.preserve_terminal_title);
         assert_eq!(
             request.spec.toggle_close_behavior,
             TransientPopupToggleCloseBehavior::Close
