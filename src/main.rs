@@ -40,6 +40,7 @@ struct State {
 struct ActiveTab {
     position: usize,
     viewport: PopupViewport,
+    floating_panes_visible: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -82,6 +83,7 @@ impl ZellijPlugin for State {
                         columns: tab.viewport_columns,
                         rows: tab.viewport_rows,
                     },
+                    floating_panes_visible: tab.are_floating_panes_visible,
                 });
             }
             Event::PaneUpdate(pane_manifest) => {
@@ -158,8 +160,11 @@ impl State {
 
         match request.action {
             TransientPopupAction::Toggle => {
-                match resolve_transient_toggle_plan_by_identity(&snapshots, request.spec.identity())
-                {
+                match resolve_transient_toggle_plan_by_identity(
+                    &snapshots,
+                    request.spec.identity(),
+                    active_tab.floating_panes_visible,
+                ) {
                     TransientTogglePlan::Open => {
                         self.displace_other_configured_popups(
                             &request,

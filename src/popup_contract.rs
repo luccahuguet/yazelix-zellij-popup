@@ -579,9 +579,12 @@ fn pane_matches_identity<Id>(
 pub fn resolve_transient_toggle_plan_by_identity<Id: Copy>(
     panes: &[TransientPaneSnapshot<'_, Id>],
     identity: TransientPaneIdentityView<'_>,
+    floating_panes_visible: bool,
 ) -> TransientTogglePlan<Id> {
     match select_transient_pane_by_identity(panes, identity) {
-        Some(pane) if pane.is_focused => TransientTogglePlan::ToggleFocused(pane.pane_id),
+        Some(pane) if pane.is_focused && floating_panes_visible => {
+            TransientTogglePlan::ToggleFocused(pane.pane_id)
+        }
         Some(pane) => TransientTogglePlan::Focus(pane.pane_id),
         None => TransientTogglePlan::Open,
     }
@@ -1685,7 +1688,7 @@ mod tests {
     }
 
     #[test]
-    fn toggle_plan_uses_title_or_command_marker_and_toggles_focused_popup() {
+    fn toggle_plan_respects_tab_wide_floating_visibility() {
         let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
             "popups",
             r#"
@@ -1698,10 +1701,29 @@ mod tests {
             .request_from_message("toggle", Some("gitui"))
             .expect("request");
         let focused = [transient_pane(11, "other", Some("gitui"), true)];
+        let unfocused = [transient_pane(12, "other", Some("gitui"), false)];
+        let suppressed = [suppressed_transient_pane(13, "other", Some("gitui"))];
 
         assert_eq!(
-            resolve_transient_toggle_plan_by_identity(&focused, request.spec.identity()),
+            resolve_transient_toggle_plan_by_identity(&focused, request.spec.identity(), true),
             TransientTogglePlan::ToggleFocused(11)
+        );
+        assert_eq!(
+            resolve_transient_toggle_plan_by_identity(&focused, request.spec.identity(), false),
+            TransientTogglePlan::Focus(11),
+            "a globally hidden floating layer must override the stale pane focus bit"
+        );
+        assert_eq!(
+            resolve_transient_toggle_plan_by_identity(&unfocused, request.spec.identity(), true),
+            TransientTogglePlan::Focus(12)
+        );
+        assert_eq!(
+            resolve_transient_toggle_plan_by_identity(&suppressed, request.spec.identity(), false),
+            TransientTogglePlan::Focus(13)
+        );
+        assert_eq!(
+            resolve_transient_toggle_plan_by_identity::<i32>(&[], request.spec.identity(), false),
+            TransientTogglePlan::Open
         );
         assert_eq!(
             super::select_transient_pane_by_identity(&focused, request.spec.identity()),
@@ -1713,32 +1735,7 @@ mod tests {
     }
 
     #[test]
-    // Regression: hidden keep-alive popups are suppressed, not floating, and must be reused.
-    fn toggle_plan_focuses_suppressed_popup_instead_of_opening() {
-        let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
-            "popups",
-            r#"
-                btm {
-                    command "yzx"
-                    arg_1 "popup_run"
-                    arg_2 "btm"
-                    toggle_close_behavior "hide"
-                }
-            "#,
-        )]));
-        let request = specs
-            .request_from_message("toggle", Some("btm"))
-            .expect("request");
-        let hidden = [suppressed_transient_pane(
-            10,
-            "yzx_btm",
-            Some("yzx popup_run btm"),
-        )];
-
-        assert_eq!(
-            resolve_transient_toggle_plan_by_identity(&hidden, request.spec.identity()),
-            TransientTogglePlan::Focus(10)
-        );
+    fn keep_alive_popup_cwd_uses_launch_state_before_process_cwd() {
         assert!(
             !should_restart_popup_for_cwd(true, Some("/repo"), Some("/repo/subdir"), "/repo"),
             "application navigation does not change the popup launch cwd"
