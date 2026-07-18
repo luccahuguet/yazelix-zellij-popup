@@ -20,6 +20,7 @@ pub enum TransientPopupAction {
     Toggle,
     Open,
     Focus,
+    Replace,
     Close,
 }
 
@@ -221,6 +222,7 @@ impl TransientPopupAction {
             "toggle" => Some(Self::Toggle),
             "open" => Some(Self::Open),
             "focus" => Some(Self::Focus),
+            "replace" => Some(Self::Replace),
             "close" => Some(Self::Close),
             _ => None,
         }
@@ -1110,6 +1112,11 @@ mod tests {
             request.launch_plan("/fallback").expect("launch plan").cwd,
             "/fallback/."
         );
+
+        let replace = specs
+            .request_from_message("replace", None)
+            .expect("configured replace request");
+        assert_eq!(replace.action, TransientPopupAction::Replace);
     }
 
     #[test]

@@ -252,6 +252,27 @@ impl State {
                     None => self.respond(pipe_message, RESULT_MISSING),
                 }
             }
+            TransientPopupAction::Replace => {
+                let pane = select_transient_pane_by_identity(&snapshots, request.spec.identity());
+                self.displace_other_configured_popups(
+                    &request,
+                    &snapshots,
+                    pane.map(|pane| pane.pane_id),
+                    &fallback_cwd,
+                );
+                if let Some(pane) = pane {
+                    self.replace_popup(
+                        pipe_message,
+                        &request,
+                        pane.pane_id,
+                        &fallback_cwd,
+                        &request_cwd,
+                        active_tab.viewport,
+                    );
+                } else {
+                    self.open_popup(pipe_message, &request, &fallback_cwd, active_tab.viewport);
+                }
+            }
             TransientPopupAction::Close => {
                 match select_transient_pane_by_identity(&snapshots, request.spec.identity()) {
                     Some(pane) => {
@@ -354,9 +375,14 @@ impl State {
             process_cwd.as_deref(),
             request_cwd,
         ) {
-            self.close_popup_pane(pane_id);
-            run_command_hook(request.spec.on_close.as_ref(), request_cwd);
-            self.open_popup(pipe_message, request, fallback_cwd, viewport);
+            self.replace_popup(
+                pipe_message,
+                request,
+                pane_id,
+                fallback_cwd,
+                request_cwd,
+                viewport,
+            );
             return;
         }
 
@@ -369,6 +395,20 @@ impl State {
             change_floating_panes_coordinates(vec![(pane_id, coordinates)]);
         }
         self.respond(pipe_message, RESULT_FOCUSED);
+    }
+
+    fn replace_popup(
+        &mut self,
+        pipe_message: &PipeMessage,
+        request: &TransientPopupPipeRequest,
+        pane_id: PaneId,
+        fallback_cwd: &str,
+        request_cwd: &str,
+        viewport: PopupViewport,
+    ) {
+        self.close_popup_pane(pane_id);
+        run_command_hook(request.spec.on_close.as_ref(), request_cwd);
+        self.open_popup(pipe_message, request, fallback_cwd, viewport);
     }
 
     fn displace_other_configured_popups(

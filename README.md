@@ -59,11 +59,13 @@ keybinds {
 ```
 
 The message `name` is the action. Supported actions are `toggle`, `open`,
-`focus`, and `close`. When there is only one configured popup or a `default`
-popup, no payload is needed. A caller that owns cwd policy can send
+`focus`, `replace`, and `close`. When there is only one configured popup or a
+`default` popup, no payload is needed. A caller that owns cwd policy can send
 `{"id":"agent","cwd":"/repo"}` instead of a plain popup id; the configured
 spec remains the command and layout owner. `focus` never hides a live popup and
 replaces it when its remembered launch cwd differs from an explicit request cwd.
+`replace` closes any matching live pane and opens a fresh one atomically, running
+its configured `on_close` hook before relaunch.
 
 ## Popup Specs
 
