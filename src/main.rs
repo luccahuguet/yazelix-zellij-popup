@@ -30,6 +30,7 @@ const RESULT_OPENED: &str = "opened";
 struct State {
     active_tab: Option<ActiveTab>,
     terminal_panes_by_tab: HashMap<usize, Vec<TerminalPane>>,
+    popup_launch_cwds: HashMap<PaneId, String>,
     initial_cwd: PathBuf,
     permissions_granted: bool,
     popup_specs: ConfiguredPopupSpecs,
@@ -85,6 +86,12 @@ impl ZellijPlugin for State {
             }
             Event::PaneUpdate(pane_manifest) => {
                 self.terminal_panes_by_tab = build_terminal_panes_by_tab(&pane_manifest);
+                self.popup_launch_cwds.retain(|pane_id, _| {
+                    self.terminal_panes_by_tab
+                        .values()
+                        .flatten()
+                        .any(|pane| pane.pane_id == *pane_id)
+                });
             }
             Event::PermissionRequestResult(status) => {
                 self.permissions_granted = status == PermissionStatus::Granted;
@@ -173,15 +180,16 @@ impl State {
                             .iter()
                             .find(|pane| pane.pane_id == pane_id)
                             .is_some_and(|pane| pane.is_suppressed);
-                        let pane_cwd = get_pane_cwd(pane_id)
+                        let process_cwd = get_pane_cwd(pane_id)
                             .ok()
                             .map(|cwd| cwd.display().to_string());
                         if should_restart_popup_for_cwd(
                             is_suppressed || request.cwd.is_some(),
-                            pane_cwd.as_deref(),
+                            self.popup_launch_cwds.get(&pane_id).map(String::as_str),
+                            process_cwd.as_deref(),
                             &request_cwd,
                         ) {
-                            close_pane_with_id(pane_id);
+                            self.close_popup_pane(pane_id);
                             run_command_hook(request.spec.on_close.as_ref(), &request_cwd);
                             self.open_popup(
                                 pipe_message,
@@ -296,7 +304,7 @@ impl State {
     }
 
     fn open_popup(
-        &self,
+        &mut self,
         pipe_message: &PipeMessage,
         request: &TransientPopupPipeRequest,
         fallback_cwd: &str,
@@ -306,10 +314,11 @@ impl State {
             self.respond(pipe_message, RESULT_INVALID_PAYLOAD);
             return;
         };
+        let launch_cwd = launch_plan.cwd;
         let command_to_run = CommandToRun {
             path: PathBuf::from(launch_plan.command_path),
             args: launch_plan.args,
-            cwd: Some(PathBuf::from(launch_plan.cwd)),
+            cwd: Some(PathBuf::from(&launch_cwd)),
         };
         let pane_id = open_command_pane_floating(
             command_to_run,
@@ -318,6 +327,7 @@ impl State {
         );
 
         if let Some(pane_id) = pane_id {
+            self.popup_launch_cwds.insert(pane_id, launch_cwd);
             let pane_title = if request.spec.preserve_terminal_title {
                 ""
             } else {
@@ -347,7 +357,7 @@ impl State {
     }
 
     fn displace_other_configured_popups(
-        &self,
+        &mut self,
         request: &TransientPopupPipeRequest,
         snapshots: &[TransientPaneSnapshot<'_, PaneId>],
         current_pane_id: Option<PaneId>,
@@ -360,6 +370,7 @@ impl State {
         ) {
             match candidate.toggle_close_behavior {
                 TransientPopupToggleCloseBehavior::Close => {
+                    self.popup_launch_cwds.remove(&candidate.pane_id);
                     close_pane_with_id(candidate.pane_id);
                     run_command_hook(candidate.on_close, fallback_cwd);
                 }
@@ -372,18 +383,23 @@ impl State {
     }
 
     fn close_popup(
-        &self,
+        &mut self,
         pipe_message: &PipeMessage,
         pane_id: PaneId,
         on_close: Option<&TransientPopupCommandHook>,
         fallback_cwd: &str,
     ) {
-        close_pane_with_id(pane_id);
+        self.close_popup_pane(pane_id);
         run_command_hook(on_close, fallback_cwd);
         match hide_floating_panes(None) {
             Ok(_) => self.respond(pipe_message, RESULT_CLOSED),
             Err(_) => self.respond(pipe_message, RESULT_CLOSED_FLOATING_CLEANUP_FAILED),
         }
+    }
+
+    fn close_popup_pane(&mut self, pane_id: PaneId) {
+        self.popup_launch_cwds.remove(&pane_id);
+        close_pane_with_id(pane_id);
     }
 
     fn hide_popup(

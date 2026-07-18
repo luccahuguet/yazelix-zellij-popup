@@ -587,22 +587,28 @@ pub fn resolve_transient_toggle_plan_by_identity<Id: Copy>(
     }
 }
 
-/// Popups whose cwd must match should restart when their process cwd differs from the
-/// effective cwd of a fresh launch. Unknown pane cwd keeps reuse.
+/// Popups whose cwd must match should restart when their remembered launch cwd differs
+/// from the effective cwd of a fresh launch. The live process cwd is a compatibility
+/// fallback for panes opened before launch tracking was available.
 pub fn should_restart_popup_for_cwd(
     cwd_must_match: bool,
-    pane_cwd: Option<&str>,
+    launch_cwd: Option<&str>,
+    process_cwd: Option<&str>,
     effective_cwd: &str,
 ) -> bool {
     if !cwd_must_match {
         return false;
     }
-    let Some(pane_cwd) = pane_cwd.map(str::trim).filter(|cwd| !cwd.is_empty()) else {
+    let Some(popup_cwd) = launch_cwd
+        .or(process_cwd)
+        .map(str::trim)
+        .filter(|cwd| !cwd.is_empty())
+    else {
         return false;
     };
     let effective_cwd = effective_cwd.trim();
     !effective_cwd.is_empty()
-        && pane_cwd.trim_end_matches('/') != effective_cwd.trim_end_matches('/')
+        && popup_cwd.trim_end_matches('/') != effective_cwd.trim_end_matches('/')
 }
 
 fn parse_raw_request(
@@ -1332,11 +1338,13 @@ mod tests {
         assert!(!should_restart_popup_for_cwd(
             true,
             Some("/repo"),
+            None,
             &request.launch_plan("/repo/docs").unwrap().cwd,
         ));
         assert!(should_restart_popup_for_cwd(
             true,
             Some("/old"),
+            None,
             &request.launch_plan("/repo/docs").unwrap().cwd,
         ));
     }
@@ -1732,19 +1740,23 @@ mod tests {
             TransientTogglePlan::Focus(10)
         );
         assert!(
-            !should_restart_popup_for_cwd(true, Some("/repo"), "/repo"),
-            "same cwd reuses the hidden keep-alive pane"
+            !should_restart_popup_for_cwd(true, Some("/repo"), Some("/repo/subdir"), "/repo"),
+            "application navigation does not change the popup launch cwd"
         );
         assert!(
-            should_restart_popup_for_cwd(true, Some("/old"), "/repo"),
-            "cwd mismatch restarts the hidden keep-alive pane"
+            should_restart_popup_for_cwd(true, Some("/old"), Some("/old/subdir"), "/repo"),
+            "launch cwd mismatch restarts the hidden keep-alive pane"
         );
         assert!(
-            !should_restart_popup_for_cwd(true, None, "/repo"),
-            "unknown pane cwd keeps reuse"
+            should_restart_popup_for_cwd(true, None, Some("/old"), "/repo"),
+            "live process cwd remains the compatibility fallback"
         );
         assert!(
-            !should_restart_popup_for_cwd(false, Some("/old"), "/repo"),
+            !should_restart_popup_for_cwd(true, None, None, "/repo"),
+            "unknown popup cwd keeps reuse"
+        );
+        assert!(
+            !should_restart_popup_for_cwd(false, Some("/old"), Some("/old/subdir"), "/repo"),
             "legacy visible popups keep their focus-derived cwd"
         );
     }

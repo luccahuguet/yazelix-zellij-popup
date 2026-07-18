@@ -161,7 +161,7 @@ popup {
 }
 ```
 
-With `hide`, pressing the toggle key while the popup is focused or replacing it with another configured popup hides that pane without killing the popup process and runs `on_hide`. Pressing the toggle key again shows and focuses the existing pane when its process cwd still matches the effective request cwd. If that cwd no longer matches, toggle closes the stale pane (and runs `on_close` if set) and opens a fresh popup at the requested cwd, or the focused terminal cwd when the request does not provide one. The explicit `close` action still closes the pane and runs `on_close`.
+With `hide`, pressing the toggle key while the popup is focused or replacing it with another configured popup hides that pane without killing the popup process and runs `on_hide`. Pressing the toggle key again shows and focuses the existing pane when its remembered launch cwd still matches the effective request cwd. Applications may change their own process cwd while running without becoming stale. If the requested launch cwd changes, toggle closes the stale pane (and runs `on_close` if set) and opens a fresh popup there. The explicit `close` action still closes the pane and runs `on_close`.
 
 For multiple popups in the same plugin config, use a nested `popups` block and send the popup id as the payload:
 
