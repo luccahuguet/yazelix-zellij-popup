@@ -1320,7 +1320,7 @@ mod tests {
     }
 
     #[test]
-    fn configured_request_cwd_overrides_focus_without_copying_the_spec() {
+    fn configured_focus_request_cwd_overrides_without_copying_the_spec() {
         let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
             "popups",
             r#"
@@ -1333,7 +1333,7 @@ mod tests {
         )]));
 
         let request = specs
-            .request_from_message("toggle", Some(r#"{"id":"agent","cwd":"/repo"}"#))
+            .request_from_message("focus", Some(r#"{"id":"agent","cwd":"/repo"}"#))
             .expect("configured request with explicit cwd");
 
         assert_eq!(request.spec.id, "agent");

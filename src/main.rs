@@ -6,9 +6,8 @@ use yazelix_zellij_popup::{
     popup_contract::{
         resolve_transient_toggle_plan_by_identity, select_transient_pane_by_identity,
         should_restart_popup_for_cwd, ConfiguredPopupSpecs, PopupMessageRequestError,
-        TransientPaneGeometry, TransientPaneSnapshot, TransientPopupAction,
-        TransientPopupCommandHook, TransientPopupPipeRequest, TransientPopupToggleCloseBehavior,
-        TransientTogglePlan,
+        TransientPaneSnapshot, TransientPopupAction, TransientPopupCommandHook,
+        TransientPopupPipeRequest, TransientPopupToggleCloseBehavior, TransientTogglePlan,
     },
     PopupViewport,
 };
@@ -185,31 +184,15 @@ impl State {
                             .iter()
                             .find(|pane| pane.pane_id == pane_id)
                             .is_some_and(|pane| pane.is_suppressed);
-                        let process_cwd = get_pane_cwd(pane_id)
-                            .ok()
-                            .map(|cwd| cwd.display().to_string());
-                        if should_restart_popup_for_cwd(
-                            is_suppressed || request.cwd.is_some(),
-                            self.popup_launch_cwds.get(&pane_id).map(String::as_str),
-                            process_cwd.as_deref(),
+                        self.show_popup(
+                            pipe_message,
+                            &request,
+                            pane_id,
+                            is_suppressed,
+                            &fallback_cwd,
                             &request_cwd,
-                        ) {
-                            self.close_popup_pane(pane_id);
-                            run_command_hook(request.spec.on_close.as_ref(), &request_cwd);
-                            self.open_popup(
-                                pipe_message,
-                                &request,
-                                &fallback_cwd,
-                                active_tab.viewport,
-                            );
-                        } else {
-                            self.focus_popup(
-                                pipe_message,
-                                pane_id,
-                                request.spec.geometry(),
-                                active_tab.viewport,
-                            );
-                        }
+                            active_tab.viewport,
+                        );
                     }
                     TransientTogglePlan::ToggleFocused(pane_id) => {
                         self.displace_other_configured_popups(
@@ -252,10 +235,17 @@ impl State {
                             Some(pane.pane_id),
                             &fallback_cwd,
                         );
-                        self.focus_popup(
+                        let is_suppressed = snapshots
+                            .iter()
+                            .find(|candidate| candidate.pane_id == pane.pane_id)
+                            .is_some_and(|candidate| candidate.is_suppressed);
+                        self.show_popup(
                             pipe_message,
+                            &request,
                             pane.pane_id,
-                            request.spec.geometry(),
+                            is_suppressed,
+                            &fallback_cwd,
+                            &request_cwd,
                             active_tab.viewport,
                         );
                     }
@@ -345,16 +335,36 @@ impl State {
         }
     }
 
-    fn focus_popup(
-        &self,
+    fn show_popup(
+        &mut self,
         pipe_message: &PipeMessage,
+        request: &TransientPopupPipeRequest,
         pane_id: PaneId,
-        geometry: Option<TransientPaneGeometry>,
+        is_suppressed: bool,
+        fallback_cwd: &str,
+        request_cwd: &str,
         viewport: PopupViewport,
     ) {
+        let process_cwd = get_pane_cwd(pane_id)
+            .ok()
+            .map(|cwd| cwd.display().to_string());
+        if should_restart_popup_for_cwd(
+            is_suppressed || request.cwd.is_some(),
+            self.popup_launch_cwds.get(&pane_id).map(String::as_str),
+            process_cwd.as_deref(),
+            request_cwd,
+        ) {
+            self.close_popup_pane(pane_id);
+            run_command_hook(request.spec.on_close.as_ref(), request_cwd);
+            self.open_popup(pipe_message, request, fallback_cwd, viewport);
+            return;
+        }
+
         show_pane_with_id(pane_id, true, true);
-        if let Some(coordinates) =
-            geometry.and_then(|geometry| floating_coordinates(geometry, Some(viewport)))
+        if let Some(coordinates) = request
+            .spec
+            .geometry()
+            .and_then(|geometry| floating_coordinates(geometry, Some(viewport)))
         {
             change_floating_panes_coordinates(vec![(pane_id, coordinates)]);
         }
