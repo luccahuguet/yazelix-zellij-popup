@@ -18,6 +18,7 @@ const RESULT_CLOSED_FLOATING_CLEANUP_FAILED: &str = "closed_floating_cleanup_fai
 const RESULT_DENIED: &str = "permissions_denied";
 const RESULT_FOCUSED: &str = "focused";
 const RESULT_HIDDEN: &str = "hidden";
+const RESULT_HIDDEN_FLOATING_CLEANUP_FAILED: &str = "hidden_floating_cleanup_failed";
 const RESULT_INVALID_CONFIG: &str = "invalid_config";
 const RESULT_INVALID_PAYLOAD: &str = "invalid_payload";
 const RESULT_MISSING: &str = "missing";
@@ -466,7 +467,10 @@ impl State {
     ) {
         hide_pane_with_id(pane_id);
         run_command_hook(on_hide, fallback_cwd);
-        self.respond(pipe_message, RESULT_HIDDEN);
+        match hide_floating_panes(None) {
+            Ok(_) => self.respond(pipe_message, RESULT_HIDDEN),
+            Err(_) => self.respond(pipe_message, RESULT_HIDDEN_FLOATING_CLEANUP_FAILED),
+        }
     }
 
     fn respond(&self, pipe_message: &PipeMessage, result: &str) {
