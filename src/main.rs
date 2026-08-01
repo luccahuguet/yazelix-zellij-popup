@@ -224,25 +224,17 @@ impl State {
                 }
             }
             TransientPopupAction::Ensure => {
-                match select_transient_pane_by_identity(&snapshots, request.spec.identity()) {
-                    None => {
-                        self.displace_other_configured_popups(
-                            &request,
-                            &snapshots,
-                            None,
-                            &fallback_cwd,
-                        );
-                        self.open_popup(pipe_message, &request, &fallback_cwd, active_tab.viewport);
-                    }
-                    Some(pane) => {
-                        self.displace_other_configured_popups(
-                            &request,
-                            &snapshots,
-                            Some(pane.pane_id),
-                            &fallback_cwd,
-                        );
-                        self.focus_popup(pipe_message, &request, pane.pane_id, active_tab.viewport);
-                    }
+                let pane = select_transient_pane_by_identity(&snapshots, request.spec.identity());
+                self.displace_other_configured_popups(
+                    &request,
+                    &snapshots,
+                    pane.map(|pane| pane.pane_id),
+                    &fallback_cwd,
+                );
+                if let Some(pane) = pane {
+                    self.focus_popup(pipe_message, &request, pane.pane_id, active_tab.viewport);
+                } else {
+                    self.open_popup(pipe_message, &request, &fallback_cwd, active_tab.viewport);
                 }
             }
             TransientPopupAction::Open => {
