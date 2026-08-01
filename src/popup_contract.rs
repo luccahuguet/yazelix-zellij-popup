@@ -18,7 +18,6 @@ const DEFAULT_VERTICAL_MARGIN: usize = 0;
 #[serde(rename_all = "snake_case")]
 pub enum TransientPopupAction {
     Toggle,
-    Ensure,
     Open,
     Focus,
     Replace,
@@ -223,7 +222,6 @@ impl TransientPopupAction {
     pub fn from_pipe_name(pipe_name: &str) -> Option<Self> {
         match pipe_name {
             "toggle" => Some(Self::Toggle),
-            "ensure" => Some(Self::Ensure),
             "open" => Some(Self::Open),
             "focus" => Some(Self::Focus),
             "replace" => Some(Self::Replace),
@@ -1121,11 +1119,6 @@ mod tests {
             .request_from_message("replace", None)
             .expect("configured replace request");
         assert_eq!(replace.action, TransientPopupAction::Replace);
-
-        let ensure = specs
-            .request_from_message("ensure", None)
-            .expect("configured ensure request");
-        assert_eq!(ensure.action, TransientPopupAction::Ensure);
     }
 
     #[test]
