@@ -90,6 +90,8 @@ struct ConfiguredPopupRequest {
     id: String,
     #[serde(default)]
     cwd: Option<String>,
+    #[serde(default)]
+    args: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -283,7 +285,7 @@ impl ConfiguredPopupSpecs {
         let Some(action) = TransientPopupAction::from_pipe_name(pipe_name) else {
             return Err(PopupMessageRequestError::UnknownAction);
         };
-        let (spec_id, cwd) = self.resolve_configured_request(payload)?;
+        let (spec_id, cwd, args) = self.resolve_configured_request(payload)?;
 
         if self.invalid_spec_ids.contains(&spec_id) {
             return Err(PopupMessageRequestError::InvalidConfiguredSpec(spec_id));
@@ -295,7 +297,7 @@ impl ConfiguredPopupSpecs {
         Ok(TransientPopupPipeRequest {
             action,
             spec,
-            args: vec![],
+            args,
             cwd,
         })
     }
@@ -303,7 +305,7 @@ impl ConfiguredPopupSpecs {
     fn resolve_configured_request(
         &self,
         payload: Option<&str>,
-    ) -> Result<(String, Option<String>), PopupMessageRequestError> {
+    ) -> Result<(String, Option<String>, Vec<String>), PopupMessageRequestError> {
         let Some(payload) = payload.map(str::trim).filter(|value| !value.is_empty()) else {
             let spec_id = if self.specs.contains_key(DEFAULT_SPEC_ID)
                 || self.invalid_spec_ids.contains(DEFAULT_SPEC_ID)
@@ -314,10 +316,10 @@ impl ConfiguredPopupSpecs {
             } else {
                 return Err(PopupMessageRequestError::InvalidPayload);
             };
-            return Ok((spec_id, None));
+            return Ok((spec_id, None, vec![]));
         };
         if !payload.starts_with('{') {
-            return Ok((payload.to_string(), None));
+            return Ok((payload.to_string(), None, vec![]));
         }
 
         let request = serde_json::from_str::<ConfiguredPopupRequest>(payload)
@@ -331,7 +333,7 @@ impl ConfiguredPopupSpecs {
         if id.is_empty() || has_cwd && cwd.is_none() {
             return Err(PopupMessageRequestError::InvalidPayload);
         }
-        Ok((id.to_string(), cwd))
+        Ok((id.to_string(), cwd, request.args))
     }
 
     pub fn select_other_configured_panes<'a, Id: Copy + PartialEq>(
@@ -1334,7 +1336,7 @@ mod tests {
     }
 
     #[test]
-    fn configured_focus_request_cwd_overrides_without_copying_the_spec() {
+    fn configured_request_adds_runtime_args_and_cwd_without_copying_the_spec() {
         let specs = ConfiguredPopupSpecs::from_configuration(&config(&[(
             "popups",
             r#"
@@ -1347,22 +1349,29 @@ mod tests {
         )]));
 
         let request = specs
-            .request_from_message("focus", Some(r#"{"id":"agent","cwd":"/repo"}"#))
-            .expect("configured request with explicit cwd");
+            .request_from_message(
+                "replace",
+                Some(r#"{"id":"agent","cwd":"/repo","args":["/repo/file with spaces"]}"#),
+            )
+            .expect("configured request with runtime values");
 
+        assert_eq!(request.action, TransientPopupAction::Replace);
         assert_eq!(request.spec.id, "agent");
-        assert_eq!(request.launch_plan("/repo/docs").unwrap().cwd, "/repo");
+        assert_eq!(request.spec.command, vec!["codex"]);
+        let launch_plan = request.launch_plan("/repo/docs").unwrap();
+        assert_eq!(launch_plan.cwd, "/repo");
+        assert_eq!(launch_plan.args, vec!["/repo/file with spaces"]);
         assert!(!should_restart_popup_for_cwd(
             true,
             Some("/repo"),
             None,
-            &request.launch_plan("/repo/docs").unwrap().cwd,
+            &launch_plan.cwd,
         ));
         assert!(should_restart_popup_for_cwd(
             true,
             Some("/old"),
             None,
-            &request.launch_plan("/repo/docs").unwrap().cwd,
+            &launch_plan.cwd,
         ));
     }
 
