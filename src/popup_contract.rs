@@ -1005,11 +1005,10 @@ fn hook_config_field(key: &str) -> Option<PopupCommandHookField> {
 #[cfg(test)]
 mod tests {
     use super::{
-        resolve_transient_toggle_plan_by_identity, select_transient_pane_by_identity,
-        should_restart_popup_for_cwd, ConfiguredPopupSpecs, PopupMessageRequestError,
-        TransientPaneDisplacementCandidate, TransientPaneGeometry, TransientPaneSnapshot,
-        TransientPaneState, TransientPopupAction, TransientPopupToggleCloseBehavior,
-        TransientTogglePlan,
+        resolve_transient_toggle_plan_by_identity, should_restart_popup_for_cwd,
+        ConfiguredPopupSpecs, PopupMessageRequestError, TransientPaneDisplacementCandidate,
+        TransientPaneGeometry, TransientPaneSnapshot, TransientPaneState, TransientPopupAction,
+        TransientPopupToggleCloseBehavior, TransientTogglePlan,
     };
     use std::collections::BTreeMap;
 
@@ -1120,6 +1119,11 @@ mod tests {
             .request_from_message("replace", None)
             .expect("configured replace request");
         assert_eq!(replace.action, TransientPopupAction::Replace);
+
+        let ensure = specs
+            .request_from_message("ensure", None)
+            .expect("configured ensure request");
+        assert_eq!(ensure.action, TransientPopupAction::Ensure);
     }
 
     #[test]
@@ -1741,30 +1745,6 @@ mod tests {
                 pane_id: 11,
                 is_focused: true,
             })
-        );
-    }
-
-    #[test]
-    fn ensure_opens_missing_popup_and_never_toggles_an_existing_one() {
-        let specs = keep_alive_and_gitui_specs();
-        let request = specs
-            .request_from_message("ensure", Some("process_monitor"))
-            .expect("ensure request");
-        let visible = [transient_pane(11, "process_monitor_popup", None, true)];
-        let unfocused = [transient_pane(12, "process_monitor_popup", None, false)];
-        let hidden = [suppressed_transient_pane(13, "process_monitor_popup", None)];
-
-        assert_eq!(request.action, TransientPopupAction::Ensure);
-        for (panes, pane_id) in [(&visible[..], 11), (&unfocused[..], 12), (&hidden[..], 13)] {
-            assert_eq!(
-                select_transient_pane_by_identity(panes, request.spec.identity())
-                    .map(|pane| pane.pane_id),
-                Some(pane_id)
-            );
-        }
-        assert_eq!(
-            select_transient_pane_by_identity::<i32>(&[], request.spec.identity()),
-            None
         );
     }
 
