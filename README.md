@@ -65,8 +65,8 @@ values can send `{"id":"agent","cwd":"/repo","args":["resume"]}` instead of a
 plain popup id; the configured spec remains the command and layout owner while
 the request arguments are appended for that launch. `focus` never hides a live
 popup and replaces it when its remembered launch cwd differs from an explicit
-request cwd. `replace` closes any matching live pane and opens a fresh one
-atomically, running its configured `on_close` hook before relaunch.
+request cwd. `replace` closes any matching live pane, runs its configured
+`on_close` hook, and then opens a fresh one.
 
 ## Popup Specs
 
