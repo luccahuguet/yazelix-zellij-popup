@@ -223,6 +223,28 @@ impl State {
                     }
                 }
             }
+            TransientPopupAction::Ensure => {
+                match select_transient_pane_by_identity(&snapshots, request.spec.identity()) {
+                    None => {
+                        self.displace_other_configured_popups(
+                            &request,
+                            &snapshots,
+                            None,
+                            &fallback_cwd,
+                        );
+                        self.open_popup(pipe_message, &request, &fallback_cwd, active_tab.viewport);
+                    }
+                    Some(pane) => {
+                        self.displace_other_configured_popups(
+                            &request,
+                            &snapshots,
+                            Some(pane.pane_id),
+                            &fallback_cwd,
+                        );
+                        self.focus_popup(pipe_message, &request, pane.pane_id, active_tab.viewport);
+                    }
+                }
+            }
             TransientPopupAction::Open => {
                 self.displace_other_configured_popups(&request, &snapshots, None, &fallback_cwd);
                 self.open_popup(pipe_message, &request, &fallback_cwd, active_tab.viewport);
@@ -387,6 +409,16 @@ impl State {
             return;
         }
 
+        self.focus_popup(pipe_message, request, pane_id, viewport);
+    }
+
+    fn focus_popup(
+        &self,
+        pipe_message: &PipeMessage,
+        request: &TransientPopupPipeRequest,
+        pane_id: PaneId,
+        viewport: PopupViewport,
+    ) {
         show_pane_with_id(pane_id, true, true);
         if let Some(coordinates) = request
             .spec
