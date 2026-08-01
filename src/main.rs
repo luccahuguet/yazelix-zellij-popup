@@ -357,6 +357,7 @@ impl State {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn show_popup(
         &mut self,
         pipe_message: &PipeMessage,
@@ -387,16 +388,6 @@ impl State {
             return;
         }
 
-        self.focus_popup(pipe_message, request, pane_id, viewport);
-    }
-
-    fn focus_popup(
-        &self,
-        pipe_message: &PipeMessage,
-        request: &TransientPopupPipeRequest,
-        pane_id: PaneId,
-        viewport: PopupViewport,
-    ) {
         show_pane_with_id(pane_id, true, true);
         if let Some(coordinates) = request
             .spec
