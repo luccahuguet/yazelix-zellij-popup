@@ -274,6 +274,25 @@ impl State {
                     self.open_popup(pipe_message, &request, &fallback_cwd, active_tab.viewport);
                 }
             }
+            TransientPopupAction::Hide => {
+                match select_transient_pane_by_identity(&snapshots, request.spec.identity()) {
+                    Some(pane) => {
+                        self.displace_other_configured_popups(
+                            &request,
+                            &snapshots,
+                            Some(pane.pane_id),
+                            &fallback_cwd,
+                        );
+                        self.hide_popup(
+                            pipe_message,
+                            pane.pane_id,
+                            request.spec.on_hide.as_ref(),
+                            &request_cwd,
+                        );
+                    }
+                    None => self.respond(pipe_message, RESULT_MISSING),
+                }
+            }
             TransientPopupAction::Close => {
                 match select_transient_pane_by_identity(&snapshots, request.spec.identity()) {
                     Some(pane) => {

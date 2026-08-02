@@ -59,7 +59,7 @@ keybinds {
 ```
 
 The message `name` is the action. Supported actions are `toggle`, `open`,
-`focus`, `replace`, and `close`. When there is only one configured popup
+`focus`, `replace`, `hide`, and `close`. When there is only one configured popup
 or a `default` popup, no payload is needed. A caller that owns runtime launch
 values can send `{"id":"agent","cwd":"/repo","args":["resume"]}` instead of a
 plain popup id; the configured spec remains the command and layout owner while
@@ -157,7 +157,10 @@ popup {
 
 `on_close` runs only when `yzpp` closes the pane in response to `toggle` or `close`. It does not run when the child process exits on its own.
 
-`on_hide` runs only when `yzpp` hides the pane because a focused hide-mode popup was toggled or another configured popup displaced it. It does not run when the pane is opened, shown, focused, explicitly closed, or when the child process exits on its own.
+`on_hide` runs only when `yzpp` hides the pane through `hide`, a focused
+hide-mode toggle, or displacement by another configured popup. It does not run
+when the pane is opened, shown, focused, explicitly closed, or when the child
+process exits on its own.
 
 Use `toggle_close_behavior "hide"` for monitor TUIs that should keep process state between toggles:
 
@@ -169,9 +172,9 @@ popup {
 }
 ```
 
-With `hide`, pressing the toggle key while the popup is focused and the floating layer is visible, or replacing it with another configured popup, hides that pane without killing the popup process and runs `on_hide`. Pressing the toggle key again shows and focuses the existing pane, including when Zellij hid the floating layer while moving focus to a tiled pane, provided its remembered launch cwd still matches the effective request cwd. Applications may change their own process cwd while running without becoming stale. If the requested launch cwd changes, toggle closes the stale pane (and runs `on_close` if set) and opens a fresh popup there. The explicit `close` action still closes the pane and runs `on_close`.
+With `hide`, pressing the toggle key while the popup is focused and the floating layer is visible, replacing it with another configured popup, or sending the explicit `hide` action hides that pane without killing the popup process and runs `on_hide`. Pressing the toggle key again shows and focuses the existing pane, including when Zellij hid the floating layer while moving focus to a tiled pane, provided its remembered launch cwd still matches the effective request cwd. Applications may change their own process cwd while running without becoming stale. If the requested launch cwd changes, toggle closes the stale pane (and runs `on_close` if set) and opens a fresh popup there. The explicit `close` action still closes the pane and runs `on_close`.
 
-Toggling a focused popup off or explicitly closing it also hides the current
+Toggling a focused popup off, explicitly hiding it, or explicitly closing it also hides the current
 tab's floating layer. This returns focus to the tiled workspace instead of
 exposing an unrelated floating pane that was underneath the popup. Other
 floating panes keep running and reappear when the user explicitly shows the

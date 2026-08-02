@@ -21,6 +21,7 @@ pub enum TransientPopupAction {
     Open,
     Focus,
     Replace,
+    Hide,
     Close,
 }
 
@@ -225,6 +226,7 @@ impl TransientPopupAction {
             "open" => Some(Self::Open),
             "focus" => Some(Self::Focus),
             "replace" => Some(Self::Replace),
+            "hide" => Some(Self::Hide),
             "close" => Some(Self::Close),
             _ => None,
         }
@@ -1119,6 +1121,11 @@ mod tests {
             .request_from_message("replace", None)
             .expect("configured replace request");
         assert_eq!(replace.action, TransientPopupAction::Replace);
+
+        let hide = specs
+            .request_from_message("hide", None)
+            .expect("configured hide request");
+        assert_eq!(hide.action, TransientPopupAction::Hide);
     }
 
     #[test]
